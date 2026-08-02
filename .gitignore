@@ -7,3 +7,4 @@ frontend/dev-dist/
 *.local
 whatsnext/public/whatsnext_frontend/
 frontend/.vite/
+__pycache__/
