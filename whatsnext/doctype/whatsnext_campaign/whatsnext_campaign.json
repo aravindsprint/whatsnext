@@ -1,0 +1,32 @@
+{
+  "doctype": "DocType",
+  "name": "Whatsnext Campaign",
+  "module": "Whatsnext",
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "field:campaign_name",
+  "sort_field": "creation",
+  "sort_order": "DESC",
+  "field_order": [
+    "campaign_name", "template", "provider", "status", "column_1",
+    "total_recipients", "sent_count", "delivered_count", "failed_count",
+    "section_recipients", "recipients"
+  ],
+  "fields": [
+    {"fieldname": "campaign_name", "fieldtype": "Data", "label": "Campaign Name", "reqd": 1, "unique": 1, "in_list_view": 1},
+    {"fieldname": "template", "fieldtype": "Link", "label": "Template", "options": "Whatsnext Message Template", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "provider", "fieldtype": "Select", "label": "Provider Override", "options": "\nMeta\nTwilio"},
+    {"fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "Draft\nQueued\nSending\nCompleted\nFailed", "default": "Draft", "in_list_view": 1, "in_standard_filter": 1, "read_only": 1},
+    {"fieldname": "column_1", "fieldtype": "Column Break"},
+    {"fieldname": "total_recipients", "fieldtype": "Int", "label": "Total Recipients", "read_only": 1, "in_list_view": 1},
+    {"fieldname": "sent_count", "fieldtype": "Int", "label": "Sent", "read_only": 1, "in_list_view": 1},
+    {"fieldname": "delivered_count", "fieldtype": "Int", "label": "Delivered", "read_only": 1},
+    {"fieldname": "failed_count", "fieldtype": "Int", "label": "Failed", "read_only": 1, "in_list_view": 1},
+    {"fieldname": "section_recipients", "fieldtype": "Section Break", "label": "Recipients"},
+    {"fieldname": "recipients", "fieldtype": "Table", "label": "Recipients", "options": "Whatsnext Campaign Recipient"}
+  ],
+  "permissions": [
+    {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1},
+    {"role": "Whatsnext User", "read": 1, "write": 1, "create": 1}
+  ]
+}

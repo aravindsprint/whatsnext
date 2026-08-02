@@ -1,0 +1,15 @@
+{
+  "doctype": "DocType",
+  "name": "Whatsnext Recipient List Item",
+  "module": "Whatsnext",
+  "istable": 1,
+  "custom": 0,
+  "engine": "InnoDB",
+  "field_order": ["contact_name", "to_number", "parameters"],
+  "fields": [
+    {"fieldname": "contact_name", "fieldtype": "Data", "label": "Name", "in_list_view": 1},
+    {"fieldname": "to_number", "fieldtype": "Data", "label": "Phone Number", "in_list_view": 1, "reqd": 1},
+    {"fieldname": "parameters", "fieldtype": "JSON", "label": "Template Parameters"}
+  ],
+  "permissions": []
+}

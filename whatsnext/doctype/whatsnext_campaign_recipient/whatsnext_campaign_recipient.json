@@ -1,0 +1,17 @@
+{
+  "doctype": "DocType",
+  "name": "Whatsnext Campaign Recipient",
+  "module": "Whatsnext",
+  "istable": 1,
+  "custom": 0,
+  "engine": "InnoDB",
+  "field_order": ["to_number", "parameters", "status", "message", "error_message"],
+  "fields": [
+    {"fieldname": "to_number", "fieldtype": "Data", "label": "Phone Number", "in_list_view": 1, "reqd": 1},
+    {"fieldname": "parameters", "fieldtype": "JSON", "label": "Template Parameters"},
+    {"fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "Pending\nSent\nDelivered\nRead\nFailed", "default": "Pending", "in_list_view": 1},
+    {"fieldname": "message", "fieldtype": "Link", "label": "Message", "options": "Whatsnext Message", "read_only": 1},
+    {"fieldname": "error_message", "fieldtype": "Small Text", "label": "Error", "in_list_view": 1}
+  ],
+  "permissions": []
+}

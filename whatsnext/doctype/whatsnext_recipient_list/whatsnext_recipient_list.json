@@ -1,0 +1,22 @@
+{
+  "doctype": "DocType",
+  "name": "Whatsnext Recipient List",
+  "module": "Whatsnext",
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "field:list_name",
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "field_order": ["list_name", "description", "recipient_count", "section_recipients", "recipients"],
+  "fields": [
+    {"fieldname": "list_name", "fieldtype": "Data", "label": "List Name", "reqd": 1, "unique": 1, "in_list_view": 1},
+    {"fieldname": "description", "fieldtype": "Data", "label": "Description"},
+    {"fieldname": "recipient_count", "fieldtype": "Int", "label": "Recipient Count", "read_only": 1, "in_list_view": 1},
+    {"fieldname": "section_recipients", "fieldtype": "Section Break", "label": "Recipients"},
+    {"fieldname": "recipients", "fieldtype": "Table", "label": "Recipients", "options": "Whatsnext Recipient List Item"}
+  ],
+  "permissions": [
+    {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1},
+    {"role": "Whatsnext User", "read": 1, "write": 1, "create": 1, "delete": 1}
+  ]
+}

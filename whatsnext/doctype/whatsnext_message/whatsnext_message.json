@@ -1,0 +1,47 @@
+{
+  "doctype": "DocType",
+  "name": "Whatsnext Message",
+  "module": "Whatsnext",
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "hash",
+  "sort_field": "creation",
+  "sort_order": "DESC",
+  "field_order": [
+    "type", "provider", "status", "column_top_1",
+    "to_number", "from_number", "profile_name",
+    "section_content", "message", "message_type", "content_type", "attach",
+    "column_content_1", "template", "template_parameters",
+    "section_meta", "provider_message_id", "conversation_id", "error_message", "scheduled_time",
+    "column_meta2", "reference_doctype", "reference_name"
+  ],
+  "fields": [
+    {"fieldname": "type", "fieldtype": "Select", "label": "Type", "options": "Incoming\nOutgoing", "reqd": 1, "in_list_view": 1, "in_standard_filter": 1},
+    {"fieldname": "provider", "fieldtype": "Select", "label": "Provider", "options": "Meta\nTwilio", "in_list_view": 1, "in_standard_filter": 1},
+    {"fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "Pending\nQueued\nSent\nDelivered\nRead\nFailed", "default": "Pending", "in_list_view": 1, "in_standard_filter": 1},
+    {"fieldname": "column_top_1", "fieldtype": "Column Break"},
+    {"fieldname": "to_number", "fieldtype": "Data", "label": "To", "in_list_view": 1},
+    {"fieldname": "from_number", "fieldtype": "Data", "label": "From"},
+    {"fieldname": "profile_name", "fieldtype": "Data", "label": "Profile Name"},
+    {"fieldname": "section_content", "fieldtype": "Section Break", "label": "Content"},
+    {"fieldname": "message", "fieldtype": "Small Text", "label": "Message", "in_list_view": 1},
+    {"fieldname": "message_type", "fieldtype": "Select", "label": "Message Type", "options": "Manual\nTemplate\nInteractive", "default": "Manual"},
+    {"fieldname": "content_type", "fieldtype": "Select", "label": "Content Type", "options": "text\nimage\ndocument\nvideo\naudio\nlocation\ninteractive", "default": "text"},
+    {"fieldname": "attach", "fieldtype": "Attach", "label": "Attachment"},
+    {"fieldname": "column_content_1", "fieldtype": "Column Break"},
+    {"fieldname": "template", "fieldtype": "Link", "label": "Template", "options": "Whatsnext Message Template"},
+    {"fieldname": "template_parameters", "fieldtype": "JSON", "label": "Template Parameters"},
+    {"fieldname": "section_meta", "fieldtype": "Section Break", "label": "Delivery Metadata", "collapsible": 1},
+    {"fieldname": "provider_message_id", "fieldtype": "Data", "label": "Provider Message ID", "unique": 0, "in_standard_filter": 1},
+    {"fieldname": "conversation_id", "fieldtype": "Data", "label": "Conversation ID"},
+    {"fieldname": "error_message", "fieldtype": "Small Text", "label": "Error Message"},
+    {"fieldname": "scheduled_time", "fieldtype": "Datetime", "label": "Scheduled Time"},
+    {"fieldname": "column_meta2", "fieldtype": "Column Break"},
+    {"fieldname": "reference_doctype", "fieldtype": "Link", "label": "Reference Document Type", "options": "DocType"},
+    {"fieldname": "reference_name", "fieldtype": "Dynamic Link", "label": "Reference Name", "options": "reference_doctype"}
+  ],
+  "permissions": [
+    {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1},
+    {"role": "Whatsnext User", "read": 1, "write": 1, "create": 1}
+  ]
+}

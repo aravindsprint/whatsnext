@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+frontend/dist/
+frontend/dev-dist/
+*.local
+whatsnext/public/whatsnext_frontend/
+frontend/.vite/

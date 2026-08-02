@@ -1,0 +1,15 @@
+{
+  "doctype": "DocType",
+  "name": "Whatsnext Notification Field",
+  "module": "Whatsnext",
+  "istable": 1,
+  "custom": 0,
+  "engine": "InnoDB",
+  "field_order": ["template_variable", "source_fieldname", "static_value"],
+  "fields": [
+    {"fieldname": "template_variable", "fieldtype": "Data", "label": "Template Variable", "description": "e.g. 1 for {{1}}", "in_list_view": 1, "reqd": 1},
+    {"fieldname": "source_fieldname", "fieldtype": "Data", "label": "Source Fieldname", "description": "Fieldname on the reference doctype to pull the value from", "in_list_view": 1},
+    {"fieldname": "static_value", "fieldtype": "Data", "label": "Or Static Value", "in_list_view": 1}
+  ],
+  "permissions": []
+}

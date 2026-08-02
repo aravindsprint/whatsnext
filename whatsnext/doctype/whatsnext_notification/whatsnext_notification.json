@@ -1,0 +1,34 @@
+{
+  "doctype": "DocType",
+  "name": "Whatsnext Notification",
+  "module": "Whatsnext",
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "field:notification_name",
+  "field_order": [
+    "notification_name", "enabled", "column_1", "event", "reference_doctype",
+    "section_recipient", "recipient_number_field", "fixed_number",
+    "section_template", "template", "provider",
+    "field_mapping",
+    "section_condition", "condition"
+  ],
+  "fields": [
+    {"fieldname": "notification_name", "fieldtype": "Data", "label": "Notification Name", "reqd": 1, "unique": 1, "in_list_view": 1},
+    {"fieldname": "enabled", "fieldtype": "Check", "label": "Enabled", "default": "1", "in_list_view": 1},
+    {"fieldname": "column_1", "fieldtype": "Column Break"},
+    {"fieldname": "event", "fieldtype": "Select", "label": "Event", "options": "On Submit\nOn Update\nOn Change\nScheduled", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "reference_doctype", "fieldtype": "Link", "label": "Reference Document Type", "options": "DocType", "reqd": 1, "in_list_view": 1, "in_standard_filter": 1},
+    {"fieldname": "section_recipient", "fieldtype": "Section Break", "label": "Recipient"},
+    {"fieldname": "recipient_number_field", "fieldtype": "Data", "label": "Recipient Phone Fieldname", "description": "Fieldname on the reference doctype holding the WhatsApp number (e.g. mobile_no, contact_mobile)"},
+    {"fieldname": "fixed_number", "fieldtype": "Data", "label": "Or Fixed Number", "description": "Use instead of / in addition to a fieldname, e.g. for internal alerts"},
+    {"fieldname": "section_template", "fieldtype": "Section Break", "label": "Message"},
+    {"fieldname": "template", "fieldtype": "Link", "label": "Template", "options": "Whatsnext Message Template", "reqd": 1},
+    {"fieldname": "provider", "fieldtype": "Select", "label": "Provider Override", "options": "\nMeta\nTwilio", "description": "Leave blank to use the system default provider"},
+    {"fieldname": "field_mapping", "fieldtype": "Table", "label": "Template Variable Mapping", "options": "Whatsnext Notification Field"},
+    {"fieldname": "section_condition", "fieldtype": "Section Break", "label": "Condition", "collapsible": 1},
+    {"fieldname": "condition", "fieldtype": "Code", "label": "Condition (Python expression, optional)", "options": "PythonExpression", "description": "e.g. doc.status == 'Completed'. Leave blank to always fire."}
+  ],
+  "permissions": [
+    {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1}
+  ]
+}
