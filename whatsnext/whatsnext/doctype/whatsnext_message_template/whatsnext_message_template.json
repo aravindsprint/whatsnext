@@ -1,0 +1,155 @@
+{
+ "doctype": "DocType",
+ "name": "Whatsnext Message Template",
+ "module": "Whatsnext",
+ "custom": 0,
+ "engine": "InnoDB",
+ "autoname": "field:template_name",
+ "field_order": [
+  "template_name",
+  "provider",
+  "language",
+  "category",
+  "approval_status",
+  "column_1",
+  "meta_template_id",
+  "twilio_content_sid",
+  "section_content",
+  "header_type",
+  "header_text",
+  "header_example_url",
+  "body",
+  "footer_text",
+  "buttons",
+  "section_vars",
+  "variables_sample"
+ ],
+ "fields": [
+  {
+   "fieldname": "template_name",
+   "fieldtype": "Data",
+   "label": "Template Name",
+   "reqd": 1,
+   "unique": 1,
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "provider",
+   "fieldtype": "Select",
+   "label": "Provider",
+   "options": "Meta\nTwilio\nBoth",
+   "default": "Meta",
+   "in_list_view": 1,
+   "in_standard_filter": 1
+  },
+  {
+   "fieldname": "language",
+   "fieldtype": "Data",
+   "label": "Language Code",
+   "default": "en",
+   "in_list_view": 1
+  },
+  {
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "label": "Category",
+   "options": "Marketing\nUtility\nAuthentication",
+   "default": "Utility"
+  },
+  {
+   "fieldname": "approval_status",
+   "fieldtype": "Select",
+   "label": "Approval Status",
+   "options": "Draft\nPending\nApproved\nRejected",
+   "default": "Draft",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "meta_template_id",
+   "fieldtype": "Data",
+   "label": "Meta Template ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "twilio_content_sid",
+   "fieldtype": "Data",
+   "label": "Twilio Content SID",
+   "depends_on": "eval:['Twilio','Both'].includes(doc.provider)",
+   "description": "From Twilio Console \u2192 Content Editor, e.g. HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. Required to send this template via Twilio."
+  },
+  {
+   "fieldname": "section_content",
+   "fieldtype": "Section Break",
+   "label": "Message Content"
+  },
+  {
+   "fieldname": "header_type",
+   "fieldtype": "Select",
+   "label": "Header Type",
+   "options": "None\nText\nImage\nDocument\nVideo",
+   "default": "None"
+  },
+  {
+   "fieldname": "header_text",
+   "fieldtype": "Data",
+   "label": "Header Text",
+   "depends_on": "eval:doc.header_type=='Text'"
+  },
+  {
+   "fieldname": "header_example_url",
+   "fieldtype": "Small Text",
+   "label": "Header Example Media URL",
+   "description": "Auto-populated by 'Sync from Meta' from the template's approved example media. Used as the default header link when sending, since WhatsApp requires fresh media on every send rather than reusing what was attached at template creation."
+  },
+  {
+   "fieldname": "body",
+   "fieldtype": "Text",
+   "label": "Body",
+   "reqd": 1,
+   "description": "Use {{1}}, {{2}} ... as variable placeholders"
+  },
+  {
+   "fieldname": "footer_text",
+   "fieldtype": "Data",
+   "label": "Footer Text"
+  },
+  {
+   "fieldname": "buttons",
+   "fieldtype": "Table",
+   "label": "Buttons",
+   "options": "Whatsnext Template Button"
+  },
+  {
+   "fieldname": "section_vars",
+   "fieldtype": "Section Break",
+   "label": "Sample Variables",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "variables_sample",
+   "fieldtype": "JSON",
+   "label": "Sample Values (for preview)"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1
+  },
+  {
+   "role": "Whatsnext User",
+   "read": 1,
+   "write": 1,
+   "create": 1
+  }
+ ]
+}

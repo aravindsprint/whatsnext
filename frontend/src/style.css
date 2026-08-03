@@ -1,0 +1,33 @@
+:root {
+  --wn-navy: #0f3d3e;
+  --wn-teal: #16a394;
+  --wn-teal-light: #e6f7f4;
+  --wn-green: #22c55e;
+  --wn-red: #ef4444;
+  --wn-amber: #f59e0b;
+  --wn-blue: #3b82f6;
+  --wn-border: #e4e8eb;
+  --wn-bg: #f6f8f9;
+  --wn-text: #1a2b2b;
+  --wn-text-muted: #6b7b7b;
+  --wn-radius: 12px;
+  --wn-shadow: 0 1px 3px rgba(15, 61, 62, 0.08);
+  --wn-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  font-family: var(--wn-font);
+  color: var(--wn-text);
+  background: var(--wn-bg);
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+a { color: inherit; text-decoration: none; }

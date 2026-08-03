@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+	<title>Whatsnext — WhatsApp Hub</title>
+	<meta name="theme-color" content="#0F3D3E" />
+	<link rel="manifest" href="/assets/whatsnext/whatsnext_frontend/manifest.webmanifest" />
+	<link rel="icon" type="image/svg+xml" href="/assets/whatsnext/images/logo.svg" />
+	{% for css in css_entries %}
+	<link rel="stylesheet" href="{{ css }}">
+	{% endfor %}
+</head>
+<body>
+	<div id="app">
+		{% if not js_entry %}
+		<div style="font-family: sans-serif; padding: 40px; text-align: center; color: #6b7b7b;">
+			<h2>Whatsnext frontend not built yet</h2>
+			<p>Run <code>cd apps/whatsnext/frontend &amp;&amp; yarn build</code>, copy <code>dist/*</code> into
+			<code>apps/whatsnext/whatsnext/public/whatsnext_frontend/</code>, then <code>bench build --app whatsnext</code>.</p>
+		</div>
+		{% endif %}
+	</div>
+
+	<script>
+		window.csrf_token = "{{ csrf_token }}";
+		window.frappeSession = {
+			user: "{{ frappe.session.user }}",
+		};
+	</script>
+
+	{% if js_entry %}
+	<script type="module" src="{{ js_entry }}"></script>
+	{% endif %}
+</body>
+</html>

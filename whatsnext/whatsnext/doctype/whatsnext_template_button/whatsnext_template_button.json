@@ -1,0 +1,15 @@
+{
+  "doctype": "DocType",
+  "name": "Whatsnext Template Button",
+  "module": "Whatsnext",
+  "istable": 1,
+  "custom": 0,
+  "engine": "InnoDB",
+  "field_order": ["button_type", "button_text", "button_value"],
+  "fields": [
+    {"fieldname": "button_type", "fieldtype": "Select", "label": "Type", "options": "Quick Reply\nURL\nPhone Number", "in_list_view": 1, "reqd": 1},
+    {"fieldname": "button_text", "fieldtype": "Data", "label": "Button Text", "in_list_view": 1, "reqd": 1},
+    {"fieldname": "button_value", "fieldtype": "Data", "label": "Value (URL / Phone / Payload)", "in_list_view": 1}
+  ],
+  "permissions": []
+}

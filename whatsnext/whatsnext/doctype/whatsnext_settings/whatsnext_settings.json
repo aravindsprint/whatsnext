@@ -1,0 +1,146 @@
+{
+ "doctype": "DocType",
+ "name": "Whatsnext Settings",
+ "module": "Whatsnext",
+ "issingle": 1,
+ "custom": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "default_provider",
+  "notify_on_failure",
+  "default_country_code",
+  "failure_notification_email",
+  "section_meta",
+  "meta_enabled",
+  "meta_phone_number_id",
+  "meta_waba_id",
+  "meta_app_id",
+  "meta_api_version",
+  "column_meta_1",
+  "meta_access_token",
+  "meta_webhook_verify_token",
+  "section_twilio",
+  "twilio_enabled",
+  "twilio_account_sid",
+  "twilio_whatsapp_number",
+  "column_twilio_1",
+  "twilio_auth_token"
+ ],
+ "fields": [
+  {
+   "fieldname": "default_provider",
+   "fieldtype": "Select",
+   "label": "Default Provider",
+   "options": "Meta\nTwilio",
+   "default": "Meta",
+   "reqd": 1
+  },
+  {
+   "fieldname": "notify_on_failure",
+   "fieldtype": "Check",
+   "label": "Notify Admin on Send Failure"
+  },
+  {
+   "fieldname": "default_country_code",
+   "fieldtype": "Data",
+   "label": "Default Country Code",
+   "default": "91",
+   "description": "Prepended to outbound numbers that look like bare local numbers (no country code), e.g. a 10-digit Indian mobile number. Digits only, no '+'."
+  },
+  {
+   "fieldname": "failure_notification_email",
+   "fieldtype": "Data",
+   "label": "Failure Notification Email",
+   "options": "Email",
+   "depends_on": "notify_on_failure"
+  },
+  {
+   "fieldname": "section_meta",
+   "fieldtype": "Section Break",
+   "label": "Meta WhatsApp Cloud API"
+  },
+  {
+   "fieldname": "meta_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Meta Cloud API"
+  },
+  {
+   "fieldname": "meta_phone_number_id",
+   "fieldtype": "Data",
+   "label": "Phone Number ID"
+  },
+  {
+   "fieldname": "meta_waba_id",
+   "fieldtype": "Data",
+   "label": "WhatsApp Business Account ID"
+  },
+  {
+   "fieldname": "meta_app_id",
+   "fieldtype": "Data",
+   "label": "App ID"
+  },
+  {
+   "fieldname": "meta_api_version",
+   "fieldtype": "Data",
+   "label": "Graph API Version",
+   "default": "v20.0"
+  },
+  {
+   "fieldname": "column_meta_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "meta_access_token",
+   "fieldtype": "Password",
+   "label": "Permanent Access Token"
+  },
+  {
+   "fieldname": "meta_webhook_verify_token",
+   "fieldtype": "Data",
+   "label": "Webhook Verify Token"
+  },
+  {
+   "fieldname": "section_twilio",
+   "fieldtype": "Section Break",
+   "label": "Twilio WhatsApp API"
+  },
+  {
+   "fieldname": "twilio_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Twilio"
+  },
+  {
+   "fieldname": "twilio_account_sid",
+   "fieldtype": "Data",
+   "label": "Account SID"
+  },
+  {
+   "fieldname": "twilio_whatsapp_number",
+   "fieldtype": "Data",
+   "label": "Twilio WhatsApp Number",
+   "description": "e.g. whatsapp:+14155238886"
+  },
+  {
+   "fieldname": "column_twilio_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "twilio_auth_token",
+   "fieldtype": "Password",
+   "label": "Auth Token"
+  }
+ ],
+ "permissions": [
+  {
+   "role": "System Manager",
+   "read": 1,
+   "write": 1,
+   "create": 1,
+   "delete": 1
+  },
+  {
+   "role": "Whatsnext User",
+   "read": 1
+  }
+ ]
+}
