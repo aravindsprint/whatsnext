@@ -1,5 +1,6 @@
 import json
 import frappe
+from werkzeug.wrappers import Response
 
 from whatsnext.whatsnext.contacts import resolve_customer_from_phone
 
@@ -23,10 +24,18 @@ def _meta_verify():
 	challenge = frappe.form_dict.get("hub.challenge")
 
 	if mode == "subscribe" and token == settings.meta_webhook_verify_token:
-		frappe.response.type = "text"
-		return challenge
-	frappe.local.response.http_status_code = 403
-	return "Verification failed"
+		# Must return the raw challenge string with a 200, nothing more --
+		# no JSON wrapper, no download disposition. frappe.response.type =
+		# "text" looks like it should do this but isn't actually a valid
+		# key in Frappe's response_type_map (the closest real option, "txt",
+		# forces a file-download Content-Disposition and needs a "doctype"
+		# key that isn't set here) -- both crash with a 500 on this exact
+		# code path. Returning a raw Response bypasses Frappe's response
+		# builder entirely (see frappe.api.handle: `if isinstance(data,
+		# Response): return data`), which is the actually-supported way to
+		# hand back a bare value from a whitelisted method.
+		return Response(challenge, status=200, mimetype="text/plain")
+	return Response("Verification failed", status=403, mimetype="text/plain")
 
 
 def _meta_receive():
