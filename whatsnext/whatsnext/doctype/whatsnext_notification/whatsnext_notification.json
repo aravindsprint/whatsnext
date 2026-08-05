@@ -16,7 +16,7 @@
     {"fieldname": "notification_name", "fieldtype": "Data", "label": "Notification Name", "reqd": 1, "unique": 1, "in_list_view": 1},
     {"fieldname": "enabled", "fieldtype": "Check", "label": "Enabled", "default": "1", "in_list_view": 1},
     {"fieldname": "column_1", "fieldtype": "Column Break"},
-    {"fieldname": "event", "fieldtype": "Select", "label": "Event", "options": "On Submit\nOn Update\nOn Change\nScheduled", "reqd": 1, "in_list_view": 1},
+    {"fieldname": "event", "fieldtype": "Select", "label": "Event", "options": "After Insert\nOn Submit\nOn Update\nOn Change\nScheduled", "reqd": 1, "in_list_view": 1},
     {"fieldname": "reference_doctype", "fieldtype": "Link", "label": "Reference Document Type", "options": "DocType", "reqd": 1, "in_list_view": 1, "in_standard_filter": 1},
     {"fieldname": "section_recipient", "fieldtype": "Section Break", "label": "Recipient"},
     {"fieldname": "recipient_number_field", "fieldtype": "Data", "label": "Recipient Phone Fieldname", "description": "Fieldname on the reference doctype holding the WhatsApp number (e.g. mobile_no, contact_mobile)"},

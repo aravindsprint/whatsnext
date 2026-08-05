@@ -9,6 +9,10 @@ import frappe
 from frappe.utils.safe_exec import safe_eval
 
 
+def after_insert(doc, method=None):
+	_dispatch_for_event(doc, "After Insert")
+
+
 def on_submit(doc, method=None):
 	_dispatch_for_event(doc, "On Submit")
 
