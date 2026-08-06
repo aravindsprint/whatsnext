@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { call } from '@/api/frappe'
 import { cacheConversations, getCachedConversations, cacheMessages, getCachedMessages } from '@/db'
+import { onNewMessage } from '@/realtime'
 
 export const useChatStore = defineStore('chat', {
   state: () => ({
@@ -85,6 +86,30 @@ export const useChatStore = defineStore('chat', {
       const list = this.messagesByConversation[this.activeConversationId] || []
       this.messagesByConversation[this.activeConversationId] = [...list, msg]
       return msg
+    },
+    // Called once on app mount. The backend already emits a realtime event
+    // on every new Whatsnext Message (see WhatsnextMessage.after_insert) --
+    // previously nothing listened for it, so incoming messages only ever
+    // showed up after a manual page reload. Wiring this up keeps both the
+    // open conversation and the sidebar list/unread counts live.
+    subscribeRealtime() {
+      if (this._unsubscribeRealtime) return
+      this._unsubscribeRealtime = onNewMessage(async (evt) => {
+        if (evt.conversation_id === this.activeConversationId) {
+          const messages = await call(
+            'whatsnext.whatsnext.api.get_messages',
+            { conversation_id: this.activeConversationId, limit: 200 },
+            'GET'
+          )
+          this.messagesByConversation[this.activeConversationId] = messages
+          cacheMessages(this.activeConversationId, messages)
+          if (evt.type === 'Incoming') {
+            await call('whatsnext.whatsnext.api.mark_as_read', { conversation_id: this.activeConversationId })
+          }
+        }
+        this.loadConversations()
+        this.loadStats()
+      })
     },
     async sendTemplate(to, template, parameters, referenceDoctype, referenceName, headerMediaUrl) {
       const msg = await call('whatsnext.whatsnext.api.send_template_message', {

@@ -73,7 +73,7 @@ async function onFileSelected(e) {
     const data = await res.json()
     const fileUrl = window.location.origin + data.message.file_url
 
-    const to = activeConversation.value.to_number || activeConversation.value.from_number
+    const to = activeConversationNumber.value
     const mediaType = mediaTypeFromMime(file.type)
     await chat.sendMedia(to, fileUrl, mediaType, '')
     scrollToBottom()
@@ -127,7 +127,7 @@ async function sendTplToActiveConversation() {
   try {
     const params = {}
     tplVariables.value.forEach((v, i) => { params[i + 1] = v })
-    const to = activeConversation.value.to_number || activeConversation.value.from_number
+    const to = activeConversationNumber.value
     await chat.sendTemplate(to, tplSelected.value.name, params, null, null, tplHeaderMediaUrl.value || undefined)
     showTplPicker.value = false
     scrollToBottom()
@@ -141,6 +141,7 @@ async function sendTplToActiveConversation() {
 onMounted(() => {
   chat.loadConversations()
   chat.loadStats()
+  chat.subscribeRealtime()
 })
 
 let searchDebounceTimer
@@ -156,6 +157,17 @@ function setFilterTab(tab) {
 
 const activeConversation = computed(() =>
   chat.conversations.find((c) => (c.conversation_id || c.name) === chat.activeConversationId)
+)
+
+// conversation_id is always the counterpart's number (set correctly in the
+// backend for both directions — see Whatsnext Message.before_insert and the
+// webhook handlers). activeConversation.to_number/from_number instead reflect
+// whichever message happened to be the *latest* in the thread, so picking
+// to_number first is wrong whenever that latest message is Incoming (its
+// to_number is our own business number, not the customer's) -- that mix-up
+// is what was causing outgoing sends/headers to target the wrong number.
+const activeConversationNumber = computed(() =>
+  activeConversation.value ? (activeConversation.value.conversation_id || activeConversation.value.name) : null
 )
 
 async function selectConversation(id) {
@@ -175,7 +187,7 @@ async function send() {
   const text = draft.value.trim()
   if (!text || !activeConversation.value) return
   draft.value = ''
-  const to = activeConversation.value.to_number || activeConversation.value.from_number
+  const to = activeConversationNumber.value
   await chat.sendText(to, text, activeConversation.value.reference_doctype, activeConversation.value.reference_name)
 }
 
@@ -298,8 +310,8 @@ async function sendNewChat() {
         <div class="wn-chat-header">
           <div class="wn-avatar">{{ (activeConversation.profile_name || '?').charAt(0).toUpperCase() }}</div>
           <div class="wn-chat-header-name">
-            <div class="wn-chat-name">{{ activeConversation.profile_name || activeConversation.to_number }}</div>
-            <div class="wn-chat-phone">{{ activeConversation.to_number || activeConversation.from_number }}</div>
+            <div class="wn-chat-name">{{ activeConversation.profile_name || activeConversationNumber }}</div>
+            <div class="wn-chat-phone">{{ activeConversationNumber }}</div>
           </div>
           <button class="wn-info-btn" @click="showMediaPanel = false; showContactInfo = !showContactInfo" title="Contact info">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -365,10 +377,10 @@ async function sendNewChat() {
         <button @click="showContactInfo = false">✕</button>
       </div>
       <div class="wn-info-avatar">{{ (activeConversation.profile_name || '?').charAt(0).toUpperCase() }}</div>
-      <div class="wn-info-name">{{ activeConversation.profile_name || activeConversation.to_number }}</div>
+      <div class="wn-info-name">{{ activeConversation.profile_name || activeConversationNumber }}</div>
       <div class="wn-info-row">
         <span class="wn-info-label">Phone</span>
-        <span>{{ activeConversation.to_number || activeConversation.from_number }}</span>
+        <span>{{ activeConversationNumber }}</span>
       </div>
       <div class="wn-info-row">
         <span class="wn-info-label">Customer</span>

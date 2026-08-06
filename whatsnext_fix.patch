@@ -1,0 +1,317 @@
+diff --git a/frontend/package-lock.json b/frontend/package-lock.json
+index 3fe2782..2f11004 100644
+--- a/frontend/package-lock.json
++++ b/frontend/package-lock.json
+@@ -10,6 +10,7 @@
+       "dependencies": {
+         "dexie": "^4.0.4",
+         "pinia": "^2.1.7",
++        "socket.io-client": "^4.8.3",
+         "vue": "^3.4.21",
+         "vue-router": "^4.3.0"
+       },
+@@ -2573,6 +2574,12 @@
+         "win32"
+       ]
+     },
++    "node_modules/@socket.io/component-emitter": {
++      "version": "3.1.2",
++      "resolved": "https://registry.npmjs.org/@socket.io/component-emitter/-/component-emitter-3.1.2.tgz",
++      "integrity": "sha512-9BCxFwvbGg/RsZK9tjXd8s4UcwR0MWeFQ1XEKIQVVvAGJyINdrqKMcTRyLoK8Rse1GjzLV9cwjWV1olXRWEXVA==",
++      "license": "MIT"
++    },
+     "node_modules/@trickfilm400/rollup-plugin-off-main-thread": {
+       "version": "3.0.0-pre1",
+       "resolved": "https://registry.npmjs.org/@trickfilm400/rollup-plugin-off-main-thread/-/rollup-plugin-off-main-thread-3.0.0-pre1.tgz",
+@@ -3170,7 +3177,6 @@
+       "version": "4.4.3",
+       "resolved": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
+       "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
+-      "dev": true,
+       "license": "MIT",
+       "dependencies": {
+         "ms": "^2.1.3"
+@@ -3274,6 +3280,28 @@
+       "dev": true,
+       "license": "ISC"
+     },
++    "node_modules/engine.io-client": {
++      "version": "6.6.6",
++      "resolved": "https://registry.npmjs.org/engine.io-client/-/engine.io-client-6.6.6.tgz",
++      "integrity": "sha512-iY6QdftLQ9pyiPoX082bpf/u1UewnOaJrtJIF9T0++QB34lZrj0uP+Q/bj8AlUsAxqhnkTV2BS8SBZSxOmoV5Q==",
++      "license": "MIT",
++      "dependencies": {
++        "@socket.io/component-emitter": "~3.1.0",
++        "debug": "~4.4.1",
++        "engine.io-parser": "~5.2.1",
++        "ws": "~8.21.0",
++        "xmlhttprequest-ssl": "~2.1.1"
++      }
++    },
++    "node_modules/engine.io-parser": {
++      "version": "5.2.3",
++      "resolved": "https://registry.npmjs.org/engine.io-parser/-/engine.io-parser-5.2.3.tgz",
++      "integrity": "sha512-HqD3yTBfnBxIrbnM1DoD6Pcq8NECnh8d4As1Qgh0z5Gg3jRRIqijury0CL3ghu/edArpUYiYqQiDUQBIs4np3Q==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=10.0.0"
++      }
++    },
+     "node_modules/entities": {
+       "version": "7.0.1",
+       "resolved": "https://registry.npmjs.org/entities/-/entities-7.0.1.tgz",
+@@ -4665,7 +4693,6 @@
+       "version": "2.1.3",
+       "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+       "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+-      "dev": true,
+       "license": "MIT"
+     },
+     "node_modules/nanoid": {
+@@ -5384,6 +5411,34 @@
+         "node": ">=20.0.0"
+       }
+     },
++    "node_modules/socket.io-client": {
++      "version": "4.8.3",
++      "resolved": "https://registry.npmjs.org/socket.io-client/-/socket.io-client-4.8.3.tgz",
++      "integrity": "sha512-uP0bpjWrjQmUt5DTHq9RuoCBdFJF10cdX9X+a368j/Ft0wmaVgxlrjvK3kjvgCODOMMOz9lcaRzxmso0bTWZ/g==",
++      "license": "MIT",
++      "dependencies": {
++        "@socket.io/component-emitter": "~3.1.0",
++        "debug": "~4.4.1",
++        "engine.io-client": "~6.6.1",
++        "socket.io-parser": "~4.2.4"
++      },
++      "engines": {
++        "node": ">=10.0.0"
++      }
++    },
++    "node_modules/socket.io-parser": {
++      "version": "4.2.7",
++      "resolved": "https://registry.npmjs.org/socket.io-parser/-/socket.io-parser-4.2.7.tgz",
++      "integrity": "sha512-IH/iSeO9T6gz1KkFleGDWkG9N3dl4jXVYUtMhIqH10Md0ttMer8nUNWiP1DKuNrybD2xBrixLJdCC9J6ECoYkg==",
++      "license": "MIT",
++      "dependencies": {
++        "@socket.io/component-emitter": "~3.1.0",
++        "debug": "~4.4.1"
++      },
++      "engines": {
++        "node": ">=10.0.0"
++      }
++    },
+     "node_modules/source-map": {
+       "version": "0.8.0",
+       "resolved": "https://registry.npmjs.org/source-map/-/source-map-0.8.0.tgz",
+@@ -6322,6 +6377,35 @@
+         "workbox-core": "7.4.1"
+       }
+     },
++    "node_modules/ws": {
++      "version": "8.21.2",
++      "resolved": "https://registry.npmjs.org/ws/-/ws-8.21.2.tgz",
++      "integrity": "sha512-54dMVAo4WIe6SKy3vBgN+9bJZqqQ8IMRevAkOLQALhi49qkkQDQfWdAZ8KQlXiEabw88ARXXdUrlvtbKQX+aKw==",
++      "license": "MIT",
++      "engines": {
++        "node": ">=10.0.0"
++      },
++      "peerDependencies": {
++        "bufferutil": "^4.0.1",
++        "utf-8-validate": ">=5.0.2"
++      },
++      "peerDependenciesMeta": {
++        "bufferutil": {
++          "optional": true
++        },
++        "utf-8-validate": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/xmlhttprequest-ssl": {
++      "version": "2.1.2",
++      "resolved": "https://registry.npmjs.org/xmlhttprequest-ssl/-/xmlhttprequest-ssl-2.1.2.tgz",
++      "integrity": "sha512-TEU+nJVUUnA4CYJFLvK5X9AOeH4KvDvhIfm0vV1GaQRtchnG0hgK5p8hw/xjv8cunWYCsiPCSDzObPyhEwq3KQ==",
++      "engines": {
++        "node": ">=0.4.0"
++      }
++    },
+     "node_modules/yallist": {
+       "version": "3.1.1",
+       "resolved": "https://registry.npmjs.org/yallist/-/yallist-3.1.1.tgz",
+diff --git a/frontend/package.json b/frontend/package.json
+index e3114b0..688a14c 100644
+--- a/frontend/package.json
++++ b/frontend/package.json
+@@ -9,10 +9,11 @@
+     "preview": "vite preview"
+   },
+   "dependencies": {
+-    "vue": "^3.4.21",
+-    "vue-router": "^4.3.0",
++    "dexie": "^4.0.4",
+     "pinia": "^2.1.7",
+-    "dexie": "^4.0.4"
++    "socket.io-client": "^4.8.3",
++    "vue": "^3.4.21",
++    "vue-router": "^4.3.0"
+   },
+   "devDependencies": {
+     "@vitejs/plugin-vue": "^5.0.4",
+diff --git a/frontend/src/pages/home/HomePage.vue b/frontend/src/pages/home/HomePage.vue
+index 5aed8ec..4fe3817 100644
+--- a/frontend/src/pages/home/HomePage.vue
++++ b/frontend/src/pages/home/HomePage.vue
+@@ -73,7 +73,7 @@ async function onFileSelected(e) {
+     const data = await res.json()
+     const fileUrl = window.location.origin + data.message.file_url
+ 
+-    const to = activeConversation.value.to_number || activeConversation.value.from_number
++    const to = activeConversationNumber.value
+     const mediaType = mediaTypeFromMime(file.type)
+     await chat.sendMedia(to, fileUrl, mediaType, '')
+     scrollToBottom()
+@@ -127,7 +127,7 @@ async function sendTplToActiveConversation() {
+   try {
+     const params = {}
+     tplVariables.value.forEach((v, i) => { params[i + 1] = v })
+-    const to = activeConversation.value.to_number || activeConversation.value.from_number
++    const to = activeConversationNumber.value
+     await chat.sendTemplate(to, tplSelected.value.name, params, null, null, tplHeaderMediaUrl.value || undefined)
+     showTplPicker.value = false
+     scrollToBottom()
+@@ -141,6 +141,7 @@ async function sendTplToActiveConversation() {
+ onMounted(() => {
+   chat.loadConversations()
+   chat.loadStats()
++  chat.subscribeRealtime()
+ })
+ 
+ let searchDebounceTimer
+@@ -158,6 +159,17 @@ const activeConversation = computed(() =>
+   chat.conversations.find((c) => (c.conversation_id || c.name) === chat.activeConversationId)
+ )
+ 
++// conversation_id is always the counterpart's number (set correctly in the
++// backend for both directions — see Whatsnext Message.before_insert and the
++// webhook handlers). activeConversation.to_number/from_number instead reflect
++// whichever message happened to be the *latest* in the thread, so picking
++// to_number first is wrong whenever that latest message is Incoming (its
++// to_number is our own business number, not the customer's) -- that mix-up
++// is what was causing outgoing sends/headers to target the wrong number.
++const activeConversationNumber = computed(() =>
++  activeConversation.value ? (activeConversation.value.conversation_id || activeConversation.value.name) : null
++)
++
+ async function selectConversation(id) {
+   await chat.openConversation(id)
+   scrollToBottom()
+@@ -175,7 +187,7 @@ async function send() {
+   const text = draft.value.trim()
+   if (!text || !activeConversation.value) return
+   draft.value = ''
+-  const to = activeConversation.value.to_number || activeConversation.value.from_number
++  const to = activeConversationNumber.value
+   await chat.sendText(to, text, activeConversation.value.reference_doctype, activeConversation.value.reference_name)
+ }
+ 
+@@ -298,8 +310,8 @@ async function sendNewChat() {
+         <div class="wn-chat-header">
+           <div class="wn-avatar">{{ (activeConversation.profile_name || '?').charAt(0).toUpperCase() }}</div>
+           <div class="wn-chat-header-name">
+-            <div class="wn-chat-name">{{ activeConversation.profile_name || activeConversation.to_number }}</div>
+-            <div class="wn-chat-phone">{{ activeConversation.to_number || activeConversation.from_number }}</div>
++            <div class="wn-chat-name">{{ activeConversation.profile_name || activeConversationNumber }}</div>
++            <div class="wn-chat-phone">{{ activeConversationNumber }}</div>
+           </div>
+           <button class="wn-info-btn" @click="showMediaPanel = false; showContactInfo = !showContactInfo" title="Contact info">
+             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+@@ -365,10 +377,10 @@ async function sendNewChat() {
+         <button @click="showContactInfo = false">✕</button>
+       </div>
+       <div class="wn-info-avatar">{{ (activeConversation.profile_name || '?').charAt(0).toUpperCase() }}</div>
+-      <div class="wn-info-name">{{ activeConversation.profile_name || activeConversation.to_number }}</div>
++      <div class="wn-info-name">{{ activeConversation.profile_name || activeConversationNumber }}</div>
+       <div class="wn-info-row">
+         <span class="wn-info-label">Phone</span>
+-        <span>{{ activeConversation.to_number || activeConversation.from_number }}</span>
++        <span>{{ activeConversationNumber }}</span>
+       </div>
+       <div class="wn-info-row">
+         <span class="wn-info-label">Customer</span>
+diff --git a/frontend/src/realtime.js b/frontend/src/realtime.js
+new file mode 100644
+index 0000000..05435a8
+--- /dev/null
++++ b/frontend/src/realtime.js
+@@ -0,0 +1,27 @@
++import { io } from 'socket.io-client'
++
++// Frappe's socketio server sits behind the same origin at /socket.io in
++// standard bench/production setups (see frappe's nginx template + Procfile).
++// The connection authenticates itself off the existing "sid" session cookie
++// (withCredentials), so no manual login/room-join handshake is needed here —
++// the server already knows which user this socket belongs to and only
++// forwards events that user is permitted to see (this doctype already has
++// has_permission/permission_query_conditions hooks registered, and
++// WhatsnextMessage.after_insert calls publish_realtime scoped to the doc).
++let socket = null
++
++export function getSocket() {
++  if (socket) return socket
++  socket = io('/', {
++    path: '/socket.io',
++    withCredentials: true,
++    transports: ['websocket', 'polling'],
++  })
++  return socket
++}
++
++export function onNewMessage(callback) {
++  const s = getSocket()
++  s.on('whatsnext_new_message', callback)
++  return () => s.off('whatsnext_new_message', callback)
++}
+diff --git a/frontend/src/stores/chat.js b/frontend/src/stores/chat.js
+index 3ff0d15..02706e8 100644
+--- a/frontend/src/stores/chat.js
++++ b/frontend/src/stores/chat.js
+@@ -1,6 +1,7 @@
+ import { defineStore } from 'pinia'
+ import { call } from '@/api/frappe'
+ import { cacheConversations, getCachedConversations, cacheMessages, getCachedMessages } from '@/db'
++import { onNewMessage } from '@/realtime'
+ 
+ export const useChatStore = defineStore('chat', {
+   state: () => ({
+@@ -86,6 +87,30 @@ export const useChatStore = defineStore('chat', {
+       this.messagesByConversation[this.activeConversationId] = [...list, msg]
+       return msg
+     },
++    // Called once on app mount. The backend already emits a realtime event
++    // on every new Whatsnext Message (see WhatsnextMessage.after_insert) --
++    // previously nothing listened for it, so incoming messages only ever
++    // showed up after a manual page reload. Wiring this up keeps both the
++    // open conversation and the sidebar list/unread counts live.
++    subscribeRealtime() {
++      if (this._unsubscribeRealtime) return
++      this._unsubscribeRealtime = onNewMessage(async (evt) => {
++        if (evt.conversation_id === this.activeConversationId) {
++          const messages = await call(
++            'whatsnext.whatsnext.api.get_messages',
++            { conversation_id: this.activeConversationId, limit: 200 },
++            'GET'
++          )
++          this.messagesByConversation[this.activeConversationId] = messages
++          cacheMessages(this.activeConversationId, messages)
++          if (evt.type === 'Incoming') {
++            await call('whatsnext.whatsnext.api.mark_as_read', { conversation_id: this.activeConversationId })
++          }
++        }
++        this.loadConversations()
++        this.loadStats()
++      })
++    },
+     async sendTemplate(to, template, parameters, referenceDoctype, referenceName, headerMediaUrl) {
+       const msg = await call('whatsnext.whatsnext.api.send_template_message', {
+         to,
