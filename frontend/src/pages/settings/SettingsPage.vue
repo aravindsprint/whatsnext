@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { call } from '@/api/frappe'
 import { useAuthStore } from '@/stores/auth'
+import { pushSupported, pushPermission, enablePush, disablePush, getExistingSubscription } from '@/push'
 
 const auth = useAuthStore()
 const settings = ref(null)
@@ -13,6 +14,40 @@ const error = ref(null)
 const testing = ref({ Meta: false, Twilio: false })
 const testResult = ref({ Meta: null, Twilio: null })
 
+// Per-device push notification opt-in — available to every logged-in user
+// (not just System Managers), since any agent working a chat wants alerts
+// on their own device regardless of whether they can touch provider config.
+const notifSupported = pushSupported()
+const notifPermission = ref(pushPermission())
+const notifSubscribed = ref(false)
+const notifBusy = ref(false)
+const notifError = ref(null)
+
+async function refreshNotifState() {
+  if (!notifSupported) return
+  notifPermission.value = pushPermission()
+  notifSubscribed.value = !!(await getExistingSubscription())
+}
+
+async function toggleNotifications() {
+  notifBusy.value = true
+  notifError.value = null
+  try {
+    if (notifSubscribed.value) {
+      await disablePush()
+    } else {
+      await enablePush()
+    }
+    await refreshNotifState()
+  } catch (e) {
+    notifError.value = e.message
+  } finally {
+    notifBusy.value = false
+  }
+}
+
+onMounted(refreshNotifState)
+
 async function load() {
   loading.value = true
   try {
@@ -20,7 +55,7 @@ async function load() {
     // Frappe returns Check fields as "0"/"1" strings (or 0/1 numbers)
     // depending on version — coerce to real booleans so the checkbox
     // v-models actually reflect the stored value after every load.
-    for (const f of ['notify_on_failure', 'meta_enabled', 'twilio_enabled']) {
+    for (const f of ['notify_on_failure', 'meta_enabled', 'twilio_enabled', 'push_notifications_enabled']) {
       res[f] = res[f] === true || res[f] === 1 || res[f] === '1'
     }
     settings.value = res
@@ -46,6 +81,7 @@ async function save() {
       'meta_phone_number_id', 'meta_waba_id', 'meta_app_id', 'meta_api_version',
       'meta_access_token', 'meta_webhook_verify_token',
       'twilio_account_sid', 'twilio_whatsapp_number', 'twilio_auth_token',
+      'vapid_subject', 'push_notifications_enabled',
       'meta_enabled', 'twilio_enabled',
     ]
     for (const f of fields) {
@@ -82,13 +118,37 @@ async function testConnection(provider) {
 </script>
 
 <template>
-  <div v-if="!auth.isSystemManager" class="wn-card wn-forbidden">
-    Settings are restricted to System Managers.
-  </div>
+  <div class="wn-settings">
+    <div class="wn-card">
+      <div class="wn-card-top">
+        <h3>Notifications</h3>
+        <label v-if="notifSupported" class="wn-checkbox">
+          <input type="checkbox" :checked="notifSubscribed" :disabled="notifBusy" @change="toggleNotifications" />
+          {{ notifSubscribed ? 'On' : 'Off' }}
+        </label>
+      </div>
+      <p v-if="!notifSupported" class="wn-hint">This browser doesn't support push notifications.</p>
+      <template v-else>
+        <p class="wn-hint">
+          Get a real notification on this device the moment a new WhatsApp message comes in — even when
+          Whatsnext isn't open.
+        </p>
+        <p v-if="notifPermission === 'denied'" class="wn-error">
+          Notifications are blocked for this site in your browser settings. Allow them there to turn this on.
+        </p>
+        <p v-else-if="notifBusy" class="wn-hint">{{ notifSubscribed ? 'Turning off…' : 'Turning on…' }}</p>
+        <p v-else-if="notifSubscribed" class="wn-success">✓ Notifications are on for this device.</p>
+        <p v-if="notifError" class="wn-error">{{ notifError }}</p>
+      </template>
+    </div>
 
-  <div v-else-if="loading" class="wn-muted">Loading settings…</div>
+    <div v-if="!auth.isSystemManager" class="wn-card wn-forbidden">
+      The rest of Settings is restricted to System Managers.
+    </div>
 
-  <div v-else-if="settings" class="wn-settings">
+    <div v-else-if="loading" class="wn-muted">Loading settings…</div>
+
+    <template v-else-if="settings">
     <div class="wn-card">
       <h3>General</h3>
       <label>Default Provider</label>
@@ -104,6 +164,15 @@ async function testConnection(provider) {
       <label>Default Country Code</label>
       <input v-model="settings.default_country_code" type="text" placeholder="91" />
       <p class="wn-hint">Prepended to outbound numbers with no country code (e.g. a bare 10-digit number).</p>
+
+      <label class="wn-checkbox">
+        <input type="checkbox" v-model="settings.push_notifications_enabled" /> Enable push notifications site-wide
+      </label>
+      <p class="wn-hint">Master switch for the browser/mobile push alerts users turn on in the Notifications card above.</p>
+      <template v-if="settings.push_notifications_enabled">
+        <label>VAPID Subject (contact for push services)</label>
+        <input v-model="settings.vapid_subject" type="text" placeholder="mailto:admin@example.com" />
+      </template>
     </div>
 
     <div class="wn-card">
@@ -189,6 +258,7 @@ async function testConnection(provider) {
     <p v-if="saved" class="wn-success">Settings saved.</p>
 
     <button class="primary" :disabled="saving" @click="save">{{ saving ? 'Saving…' : 'Save Settings' }}</button>
+    </template>
   </div>
 </template>
 

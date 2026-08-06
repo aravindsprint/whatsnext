@@ -25,3 +25,22 @@ class WhatsnextMessage(Document):
 			docname=self.name,
 			after_commit=True,
 		)
+
+		# Push a real OS notification for inbound messages (outbound/sent
+		# messages don't need one -- the sender already knows they sent it).
+		# Enqueued as a background job, not called inline: it fans out to
+		# every subscribed user's push service over HTTP, which can be slow
+		# or flaky, and this fires from the inbound webhook handler where
+		# that latency would otherwise delay the response Meta/Twilio expect.
+		if self.type == "Incoming":
+			frappe.enqueue(
+				"whatsnext.whatsnext.push_engine.notify_new_message",
+				queue="short",
+				enqueue_after_commit=True,
+				message_name=self.name,
+				conversation_id=self.conversation_id,
+				customer=self.customer,
+				text=self.message,
+				profile_name=self.profile_name,
+				from_number=self.from_number,
+			)

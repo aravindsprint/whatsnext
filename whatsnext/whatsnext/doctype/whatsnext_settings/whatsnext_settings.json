@@ -24,7 +24,13 @@
   "twilio_account_sid",
   "twilio_whatsapp_number",
   "column_twilio_1",
-  "twilio_auth_token"
+  "twilio_auth_token",
+  "section_push",
+  "push_notifications_enabled",
+  "vapid_public_key",
+  "column_push_1",
+  "vapid_private_key",
+  "vapid_subject"
  ],
  "fields": [
   {
@@ -128,6 +134,41 @@
    "fieldname": "twilio_auth_token",
    "fieldtype": "Password",
    "label": "Auth Token"
+  },
+  {
+   "fieldname": "section_push",
+   "fieldtype": "Section Break",
+   "label": "Browser / Mobile Push Notifications"
+  },
+  {
+   "fieldname": "push_notifications_enabled",
+   "fieldtype": "Check",
+   "label": "Enable Push Notifications",
+   "description": "Sends a real OS-level notification (web push) to every subscribed user's device when a new incoming WhatsApp message arrives \u2014 even if the browser tab or installed PWA is closed."
+  },
+  {
+   "fieldname": "vapid_public_key",
+   "fieldtype": "Small Text",
+   "label": "VAPID Public Key",
+   "read_only": 1,
+   "description": "Auto-generated on first use. Served to the frontend so browsers can create a push subscription."
+  },
+  {
+   "fieldname": "column_push_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "vapid_private_key",
+   "fieldtype": "Password",
+   "label": "VAPID Private Key",
+   "read_only": 1,
+   "description": "Auto-generated on first use. Never sent to the frontend \u2014 used server-side to sign push messages."
+  },
+  {
+   "fieldname": "vapid_subject",
+   "fieldtype": "Data",
+   "label": "VAPID Subject (mailto: or https:// contact)",
+   "description": "Required by the push spec so push services can contact you about this sender if needed, e.g. mailto:admin@example.com"
   }
  ],
  "permissions": [

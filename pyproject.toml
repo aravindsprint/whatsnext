@@ -11,6 +11,7 @@ readme = "README.md"
 license = { text = "MIT" }
 dependencies = [
     "requests>=2.28.0",
+    "pywebpush>=2.0.0",
 ]
 # Do NOT list "frappe" here — it's provided by the bench environment and
 # including it causes Marketplace build failures.

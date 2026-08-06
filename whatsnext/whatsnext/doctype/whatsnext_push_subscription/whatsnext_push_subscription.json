@@ -1,0 +1,22 @@
+{
+  "doctype": "DocType",
+  "name": "Whatsnext Push Subscription",
+  "module": "Whatsnext",
+  "custom": 0,
+  "engine": "InnoDB",
+  "autoname": "hash",
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "field_order": ["user", "endpoint", "p256dh", "auth", "user_agent"],
+  "fields": [
+    {"fieldname": "user", "fieldtype": "Link", "options": "User", "label": "User", "reqd": 1, "in_list_view": 1, "in_standard_filter": 1},
+    {"fieldname": "endpoint", "fieldtype": "Long Text", "label": "Push Endpoint", "reqd": 1},
+    {"fieldname": "p256dh", "fieldtype": "Data", "label": "p256dh Key", "reqd": 1},
+    {"fieldname": "auth", "fieldtype": "Data", "label": "Auth Secret", "reqd": 1},
+    {"fieldname": "user_agent", "fieldtype": "Data", "label": "User Agent"}
+  ],
+  "permissions": [
+    {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1},
+    {"role": "Whatsnext User", "read": 1, "write": 1, "create": 1, "delete": 1, "if_owner": 1}
+  ]
+}

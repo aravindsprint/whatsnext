@@ -18,6 +18,8 @@
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.4",
     "vite": "^5.2.0",
-    "vite-plugin-pwa": "^0.19.8"
+    "vite-plugin-pwa": "^0.19.8",
+    "workbox-precaching": "^7.0.0",
+    "workbox-routing": "^7.0.0"
   }
 }

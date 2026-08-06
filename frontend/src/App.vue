@@ -5,13 +5,26 @@ import AppHeader from '@/components/AppHeader.vue'
 import NavSidebar from '@/components/NavSidebar.vue'
 import { useAuthStore } from '@/stores/auth'
 import { isLoggedIn } from '@/api/frappe'
+import { pushPermission, enablePush } from '@/push'
 
 const route = useRoute()
 const auth = useAuthStore()
 const isLoginRoute = computed(() => route.name === 'login')
 
 onMounted(() => {
-  if (isLoggedIn()) auth.loadWhoAmI()
+  if (isLoggedIn()) {
+    auth.loadWhoAmI()
+    // Re-register the push subscription with the backend if the user
+    // already granted notification permission on a previous visit —
+    // browsers can rotate/expire a push endpoint, and this keeps the
+    // server's copy current without asking again. Never prompts for
+    // permission here; that only happens from the explicit Settings toggle.
+    if (pushPermission() === 'granted') {
+      enablePush().catch(() => {
+        /* non-fatal — Settings page surfaces any real problem */
+      })
+    }
+  }
 })
 </script>
 

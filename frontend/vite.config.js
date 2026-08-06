@@ -7,16 +7,24 @@ export default defineConfig(({ command }) => ({
     vue(),
     VitePWA({
       registerType: 'autoUpdate',
-      workbox: {
-        clientsClaim: true,
-        skipWaiting: true,
-        navigateFallbackDenylist: [
-          /^\/api/,
-          /^\/files/,
-          /^\/app/,
-          /^\/whatsnext\/settings/,
-          /^\/whatsnext\/templates/,
-        ],
+      // Switched from the default generateSW strategy to injectManifest:
+      // generateSW builds the service worker entirely from config and has
+      // no way to add our own event listeners, but real-time chat alerts
+      // need a custom 'push' handler (to call showNotification with the
+      // server's payload) and 'notificationclick' handler (to focus/open
+      // the right conversation) — injectManifest lets us own src/sw.js
+      // directly while workbox still injects the precache manifest into it.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
+      injectManifest: {
+        // Keep the precached app-shell small; large generated JS chunks
+        // are still fetched normally and cached at runtime as they load.
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+      },
+      devOptions: {
+        enabled: true,
+        type: 'module',
       },
       manifest: {
         name: 'Whatsnext — WhatsApp Hub',
