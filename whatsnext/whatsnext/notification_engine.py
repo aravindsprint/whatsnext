@@ -69,6 +69,10 @@ def _fire(notif, doc):
 			value = doc.get(row.source_fieldname, value)
 		params[row.template_variable] = value
 
+	header_media_url = None
+	if notif.attach_document_print:
+		header_media_url = _attach_document_pdf(notif, doc)
+
 	from whatsnext.whatsnext.api import send_template_message
 	send_template_message(
 		to=number,
@@ -77,4 +81,25 @@ def _fire(notif, doc):
 		provider=notif.provider or None,
 		reference_doctype=doc.doctype,
 		reference_name=doc.name,
+		header_media_url=header_media_url,
 	)
+
+
+def _attach_document_pdf(notif, doc):
+	"""Renders doc's print format to PDF and saves it as a public File so its
+	URL can be handed to Meta/Twilio as the template's document header — a
+	private file URL (the frappe.utils.file_manager default) isn't fetchable
+	by either provider, same failure mode as the scontent.whatsapp.net links
+	on the marketing templates. Mirrors the old WhatsApp Notification's
+	attach_document_print behaviour, minus the reliance on the desk-only
+	print PDF endpoint that doctype no longer has access to here."""
+	from frappe.utils.file_manager import save_file
+	from frappe.utils.pdf import get_pdf
+	from frappe.www.printview import get_html
+
+	html = get_html(doctype=doc.doctype, name=doc.name, print_format=notif.print_format or None, no_letterhead=0)
+	pdf_content = get_pdf(html)
+
+	fname = f"{doc.doctype}-{doc.name}.pdf".replace(" ", "-").replace("/", "-")
+	file_doc = save_file(fname, pdf_content, doc.doctype, doc.name, is_private=0)
+	return file_doc.file_url if file_doc.file_url.startswith("http") else frappe.utils.get_url(file_doc.file_url)
