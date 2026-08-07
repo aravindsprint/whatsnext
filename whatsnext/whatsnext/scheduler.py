@@ -69,6 +69,71 @@ def _recover_stuck_campaigns(cutoff):
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- scheduled job
 
 
+def dispatch_scheduled_doctype_notifications():
+	"""Runs every 5 minutes. Polling counterpart to the realtime doc_events
+	wired in hooks.py: covers any Whatsnext Notification configured with
+	Event = "Scheduled", which is how a doctype outside hooks.py's curated
+	WATCHED_DOCTYPES list still gets full coverage instead of silently
+	doing nothing (see whatsnext_notification.py's validate(), which
+	refuses to save any other combination for an unwatched doctype).
+
+	Approximate by nature: this catches anything with `modified` newer than
+	the notification's own last_polled timestamp, so distinct inserts vs.
+	updates aren't distinguished the way realtime on_submit/on_update are —
+	same document changed twice inside one polling window only notifies
+	once. That tradeoff is what makes arbitrary-doctype coverage possible
+	without a dedicated doc_events hook for each one.
+	"""
+	from whatsnext.whatsnext.notification_engine import _fire
+
+	notifications = frappe.get_all(
+		"Whatsnext Notification",
+		filters={"event": "Scheduled", "enabled": 1},
+		fields=["name", "reference_doctype", "last_polled"],
+	)
+	if not notifications:
+		return
+
+	now = now_datetime()
+	for row in notifications:
+		if not row.reference_doctype:
+			continue
+
+		since = row.last_polled or add_to_date(now, minutes=-5)
+		try:
+			changed = frappe.get_all(
+				row.reference_doctype,
+				filters={"modified": [">", since]},
+				fields=["name"],
+				limit_page_length=200,
+			)
+		except Exception:
+			# Doctype renamed/removed since this notification was configured,
+			# or some other lookup failure — log once and move on rather than
+			# letting one bad config break the whole polling run.
+			frappe.log_error(
+				frappe.get_traceback(),
+				f"Whatsnext Scheduled notification '{row.name}': couldn't query '{row.reference_doctype}'",
+			)
+			continue
+
+		if changed:
+			notif = frappe.get_cached_doc("Whatsnext Notification", row.name)
+			for c in changed:
+				doc = frappe.get_doc(row.reference_doctype, c.name)
+				try:
+					_fire(notif, doc)
+				except Exception:
+					frappe.log_error(
+						frappe.get_traceback(),
+						f"Whatsnext Scheduled notification '{row.name}' failed for {row.reference_doctype} {c.name}",
+					)
+
+		frappe.db.set_value("Whatsnext Notification", row.name, "last_polled", now, update_modified=False)
+
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- scheduled job
+
+
 def refresh_template_approval_status():
 	"""Daily: pull Meta template approval statuses so locally-created templates
 	reflect real WhatsApp Business Manager review outcomes."""
