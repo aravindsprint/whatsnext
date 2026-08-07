@@ -34,7 +34,16 @@ def get_vapid_keys():
 
 	frappe.db.set_single_value("Whatsnext Settings", "vapid_public_key", public_key)
 	frappe.db.set_single_value("Whatsnext Settings", "vapid_private_key", private_pem)
-	frappe.db.commit()
+	# Manual commit is intentional here (unlike a normal request, where
+	# Frappe's own end-of-request commit would be enough): this can run
+	# inside a background job sending a push after a message arrives, and
+	# if something later in that same job fails, an uncommitted keypair
+	# would roll back and silently regenerate on the next call -- which
+	# would permanently break delivery to every subscription a browser had
+	# already created against the old public key (they're bound to it and
+	# can't be repointed at a new one). Committing the keypair the moment
+	# it's generated, before it's ever handed to a browser, avoids that.
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 	return public_key, private_pem
 

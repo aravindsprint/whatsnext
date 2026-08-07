@@ -50,8 +50,9 @@ def save_push_subscription(subscription):
 	doc.p256dh = p256dh
 	doc.auth = auth
 	doc.user_agent = frappe.request.headers.get("User-Agent", "")[:140] if frappe.request else ""
+	# No manual commit here: this runs inside a normal whitelisted request,
+	# and Frappe commits automatically once it returns successfully.
 	doc.save(ignore_permissions=True)
-	frappe.db.commit()
 
 	return {"ok": True}
 
@@ -66,6 +67,8 @@ def remove_push_subscription(endpoint):
 		"name",
 	)
 	if name:
+		# No manual commit here either -- same reasoning as save_push_subscription
+		# above: this is a normal whitelisted request, and Frappe commits
+		# automatically once it returns successfully.
 		frappe.delete_doc("Whatsnext Push Subscription", name, ignore_permissions=True)
-		frappe.db.commit()
 	return {"ok": True}
