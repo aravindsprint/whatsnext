@@ -17,10 +17,27 @@ export default defineConfig(({ command }) => ({
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.js',
+      // whatsnext.html is a hand-written Jinja template (see www/whatsnext.py),
+      // not vite's own generated index.html — so vite-plugin-pwa's normal
+      // auto-injected <script> registration would never actually run; that
+      // markup only gets added to the index.html vite itself builds, which
+      // Frappe never serves. Registration is done manually in main.js
+      // instead, so turn off the injection to avoid a dead, unused snippet.
+      injectRegister: false,
       injectManifest: {
         // Keep the precached app-shell small; large generated JS chunks
         // are still fetched normally and cached at runtime as they load.
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        // The built sw.js is copied to /whatsnext/sw.js at build time (see
+        // scripts/copy-sw.js) so its registration scope covers the app's
+        // pages. But workbox resolves each precache entry's url relative
+        // to wherever the SW script itself is served from — without this
+        // prefix, every asset URL would resolve relative to /whatsnext/
+        // instead of the assets' real location, breaking precaching (and
+        // potentially the SW install step) entirely.
+        modifyURLPrefix: {
+          '': '/assets/whatsnext/whatsnext_frontend/',
+        },
       },
       devOptions: {
         enabled: true,
@@ -33,11 +50,22 @@ export default defineConfig(({ command }) => ({
         background_color: '#0F3D3E',
         display: 'standalone',
         start_url: '/whatsnext',
+        // Explicit, matching the real page directory (and the service
+        // worker's own registration scope in main.js) — without this,
+        // vite-plugin-pwa defaults scope to `base` (the assets directory),
+        // which doesn't contain start_url and trips a browser warning.
+        scope: '/whatsnext/',
         icons: [
-          { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-          { src: '/icons/icon-192-maskable.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
-          { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
-          { src: '/icons/icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          // Relative (no leading slash): vite-plugin-pwa prefixes these
+          // with `base` when it writes manifest.webmanifest, so they
+          // resolve to the actual served location
+          // (/assets/whatsnext/whatsnext_frontend/icons/...). An absolute
+          // path here is taken literally and skips that prefixing, which
+          // is what produced the 404s on /icons/icon-192.png.
+          { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'icons/icon-192-maskable.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+          { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
+          { src: 'icons/icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
     }),

@@ -1,16 +1,21 @@
-import { precacheAndRoute, createHandlerBoundToURL } from 'workbox-precaching'
-import { NavigationRoute, registerRoute } from 'workbox-routing'
+import { precacheAndRoute } from 'workbox-precaching'
 
 // Injected at build time by vite-plugin-pwa (injectManifest strategy) with
-// the hashed list of built assets to precache for offline use.
+// the hashed list of built assets to precache for offline use. URLs are
+// rewritten to their real absolute location (see modifyURLPrefix in
+// vite.config.js) since this script itself is served from /whatsnext/sw.js
+// — a different directory than the assets it's precaching.
 precacheAndRoute(self.__WB_MANIFEST)
 
-// Offline/SPA-navigation fallback: serve the cached app shell for any
-// navigation that isn't one of these paths, mirroring the denylist the
-// previous generateSW config used (the server already resolves all of
-// these routes itself when online — this only matters offline).
-const denylist = [/^\/api/, /^\/files/, /^\/app/, /^\/whatsnext\/settings/, /^\/whatsnext\/templates/]
-registerRoute(new NavigationRoute(createHandlerBoundToURL('index.html'), { denylist }))
+// No offline navigation/app-shell fallback here on purpose: the page at
+// /whatsnext is rendered server-side by a Jinja template (www/whatsnext.py)
+// that injects a live CSRF token and session info. The static index.html
+// vite itself builds alongside the assets is a different, incomplete file
+// that was never actually served to anyone — precaching it and using it as
+// an offline fallback would silently serve a broken shell instead of
+// genuinely helping offline use. Precaching the real JS/CSS/icon assets
+// above still lets an already-loaded page keep working offline; it just
+// doesn't extend to a fresh cold-start navigation with no network.
 
 self.skipWaiting()
 self.addEventListener('activate', () => self.clients.claim())
@@ -31,8 +36,13 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'Whatsnext'
   const options = {
     body: data.body || '',
-    icon: '/icons/icon-192.png',
-    badge: '/icons/icon-192.png',
+    // Absolute path matching the real served location
+    // (/assets/whatsnext/whatsnext_frontend/icons/...) — this file can't
+    // use a relative path or vite's base-prefixing the way vite.config.js's
+    // manifest icons do, since injectManifest only injects the precache
+    // list into this file, not rewrite arbitrary string literals in it.
+    icon: '/assets/whatsnext/whatsnext_frontend/icons/icon-192.png',
+    badge: '/assets/whatsnext/whatsnext_frontend/icons/icon-192.png',
     tag: data.tag || 'whatsnext',
     renotify: true,
     data: { url: data.url || '/whatsnext' },

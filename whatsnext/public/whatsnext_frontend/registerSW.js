@@ -1,1 +1,0 @@
-if('serviceWorker' in navigator) {window.addEventListener('load', () => {navigator.serviceWorker.register('/assets/whatsnext/whatsnext_frontend/sw.js', { scope: '/assets/whatsnext/whatsnext_frontend/' })})}
