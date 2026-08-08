@@ -54,6 +54,14 @@ after_migrate = "whatsnext.whatsnext.setup.create_defaults"
 # Website route rules — serve the SPA shell for every /whatsnext/* path so
 # Vue Router can handle client-side routing (deep links, refreshes, etc).
 website_route_rules = [
+    # These exact static files must resolve to their own physical files
+    # (www/whatsnext/sw.js, public/whatsnext_frontend/manifest.webmanifest)
+    # rather than falling into the SPA catch-all below — the service worker
+    # script in particular MUST be served with a JS mime type, or the
+    # browser rejects registration with a SecurityError. Listed before the
+    # wildcard so they're matched first.
+    {"from_route": "/whatsnext/sw.js", "to_route": "whatsnext/sw.js"},
+    {"from_route": "/whatsnext/manifest.webmanifest", "to_route": "whatsnext/manifest.webmanifest"},
     {"from_route": "/whatsnext/<path:app_path>", "to_route": "whatsnext"},
 ]
 
