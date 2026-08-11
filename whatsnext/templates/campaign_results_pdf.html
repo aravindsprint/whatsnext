@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 11px; color: #1a1a1a; }
+  h1 { font-size: 18px; margin-bottom: 2px; }
+  .wn-meta { color: #555; margin-bottom: 16px; }
+  .wn-meta span { margin-right: 18px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #ddd; }
+  th { background: #f2f2f2; text-transform: uppercase; font-size: 9.5px; letter-spacing: 0.03em; color: #555; }
+  tr.failed { background: #fef2f2; }
+  .status-pill { display: inline-block; padding: 1px 8px; border-radius: 8px; font-size: 9.5px; font-weight: 600; }
+  .status-Sent, .status-Delivered { background: #e6f7f4; color: #0f8c72; }
+  .status-Failed { background: #fee2e2; color: #b91c1c; }
+  .status-Pending { background: #fef3c7; color: #92400e; }
+</style>
+</head>
+<body>
+  <h1>{{ campaign_name }} — Campaign Results</h1>
+  <div class="wn-meta">
+    <span>Template: <strong>{{ template }}</strong></span>
+    <span>Status: <strong>{{ status }}</strong></span>
+    <span>Total: <strong>{{ total_recipients }}</strong></span>
+    <span>Sent: <strong>{{ sent_count }}</strong></span>
+    <span>Failed: <strong>{{ failed_count }}</strong></span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Phone Number</th>
+        <th>Status</th>
+        <th>Parameters</th>
+        <th>Error</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr class="{{ 'failed' if row[1] == 'Failed' else '' }}">
+        <td>{{ row[0] }}</td>
+        <td><span class="status-pill status-{{ row[1] }}">{{ row[1] }}</span></td>
+        <td>{{ row[2] }}</td>
+        <td>{{ row[3] }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

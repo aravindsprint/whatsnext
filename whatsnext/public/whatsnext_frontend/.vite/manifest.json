@@ -1,13 +1,13 @@
 {
-  "_csv-COt6M5W5.js": {
-    "file": "assets/csv-COt6M5W5.js",
+  "_csv-BhJIt_nw.js": {
+    "file": "assets/csv-BhJIt_nw.js",
     "name": "csv",
     "imports": [
       "index.html"
     ]
   },
   "index.html": {
-    "file": "assets/index-BiimnzsR.js",
+    "file": "assets/index-Hg4_s8zn.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -27,7 +27,7 @@
     ]
   },
   "src/pages/about/AboutPage.vue": {
-    "file": "assets/AboutPage-B216f1dN.js",
+    "file": "assets/AboutPage-CZnxwtP3.js",
     "name": "AboutPage",
     "src": "src/pages/about/AboutPage.vue",
     "isDynamicEntry": true,
@@ -39,20 +39,20 @@
     ]
   },
   "src/pages/campaigns/CampaignsPage.vue": {
-    "file": "assets/CampaignsPage-DbPWxB54.js",
+    "file": "assets/CampaignsPage-CUJ6yrQL.js",
     "name": "CampaignsPage",
     "src": "src/pages/campaigns/CampaignsPage.vue",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_csv-COt6M5W5.js"
+      "_csv-BhJIt_nw.js"
     ],
     "css": [
-      "assets/CampaignsPage-zs7DBBSM.css"
+      "assets/CampaignsPage-LYDWKDGM.css"
     ]
   },
   "src/pages/dashboard/DashboardPage.vue": {
-    "file": "assets/DashboardPage-BsjXDSBV.js",
+    "file": "assets/DashboardPage-CUYULZc1.js",
     "name": "DashboardPage",
     "src": "src/pages/dashboard/DashboardPage.vue",
     "isDynamicEntry": true,
@@ -64,7 +64,7 @@
     ]
   },
   "src/pages/home/HomePage.vue": {
-    "file": "assets/HomePage-BYBXM7Lw.js",
+    "file": "assets/HomePage-CiF4_zz0.js",
     "name": "HomePage",
     "src": "src/pages/home/HomePage.vue",
     "isDynamicEntry": true,
@@ -76,7 +76,7 @@
     ]
   },
   "src/pages/login/LoginPage.vue": {
-    "file": "assets/LoginPage-WH2SfsTw.js",
+    "file": "assets/LoginPage-D-LNebYp.js",
     "name": "LoginPage",
     "src": "src/pages/login/LoginPage.vue",
     "isDynamicEntry": true,
@@ -88,7 +88,7 @@
     ]
   },
   "src/pages/message-log/MessageLogPage.vue": {
-    "file": "assets/MessageLogPage-p49QCaTU.js",
+    "file": "assets/MessageLogPage-mmTixNzN.js",
     "name": "MessageLogPage",
     "src": "src/pages/message-log/MessageLogPage.vue",
     "isDynamicEntry": true,
@@ -100,20 +100,20 @@
     ]
   },
   "src/pages/recipients/RecipientsPage.vue": {
-    "file": "assets/RecipientsPage-B0rupteh.js",
+    "file": "assets/RecipientsPage-C5TYV6yZ.js",
     "name": "RecipientsPage",
     "src": "src/pages/recipients/RecipientsPage.vue",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_csv-COt6M5W5.js"
+      "_csv-BhJIt_nw.js"
     ],
     "css": [
       "assets/RecipientsPage-MRJ-xd5u.css"
     ]
   },
   "src/pages/settings/SettingsPage.vue": {
-    "file": "assets/SettingsPage-D0ZDfNcJ.js",
+    "file": "assets/SettingsPage-Ca_sdN-0.js",
     "name": "SettingsPage",
     "src": "src/pages/settings/SettingsPage.vue",
     "isDynamicEntry": true,
@@ -125,7 +125,7 @@
     ]
   },
   "src/pages/templates/TemplatesPage.vue": {
-    "file": "assets/TemplatesPage-BCaSOi4o.js",
+    "file": "assets/TemplatesPage-XWUsHw1v.js",
     "name": "TemplatesPage",
     "src": "src/pages/templates/TemplatesPage.vue",
     "isDynamicEntry": true,

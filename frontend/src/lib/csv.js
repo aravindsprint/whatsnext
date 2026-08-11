@@ -2,7 +2,14 @@
 // Supports an optional header row:
 //   "name,phone,1,2"  -> contact_name + to_number + numbered variables
 //   "phone,1,2"       -> to_number + numbered variables
-//   (no header)       -> first column is the phone number, rest are variables
+//   (no header)       -> auto-detected: whichever of the first two columns
+//                        looks like a phone number is treated as the phone;
+//                        the other (if any) becomes contact_name.
+export function looksLikePhone(value) {
+  const digits = (value || '').replace(/[\s\-()]/g, '')
+  return /^\+?\d{7,15}$/.test(digits)
+}
+
 export function parseRecipientsCsv(text) {
   const lines = text
     .split('\n')
@@ -22,18 +29,39 @@ export function parseRecipientsCsv(text) {
       const cells = line.split(',').map((c) => c.trim())
       let contact_name = ''
       let rest
+      let to_number
+
       if (hasNameCol) {
+        // Explicit header told us the order: name,phone,...
         contact_name = cells[0] || ''
+        to_number = cells[1]
         rest = cells.slice(2)
-      } else {
+      } else if (isHeader) {
+        // Explicit phone/to/number header: phone,...
+        to_number = cells[0]
         rest = cells.slice(1)
+      } else {
+        // No header — auto-detect which of the first two columns is the
+        // phone number rather than assuming column order, so a manually
+        // typed "Aravind,9894088422" row doesn't get sent to WhatsApp with
+        // the contact's name as the destination number.
+        const col0Phone = looksLikePhone(cells[0])
+        const col1Phone = cells.length > 1 && looksLikePhone(cells[1])
+        if (!col0Phone && col1Phone) {
+          contact_name = cells[0] || ''
+          to_number = cells[1]
+          rest = cells.slice(2)
+        } else {
+          to_number = cells[0]
+          rest = cells.slice(1)
+        }
       }
-      const to_number = hasNameCol ? cells[1] : cells[0]
+
       const parameters = {}
       rest.forEach((val, i) => {
         parameters[String(i + 1)] = val
       })
-      return { contact_name, to_number, parameters }
+      return { contact_name, to_number, parameters, valid: looksLikePhone(to_number) }
     })
     .filter((r) => r.to_number)
 }

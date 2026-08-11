@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import timedelta
 
 import frappe
@@ -619,6 +620,17 @@ def create_campaign(campaign_name: str, template: str, recipients: str | list, p
 	if not recipients:
 		frappe.throw("At least one recipient is required.")
 
+	phone_re = re.compile(r"^\+?\d{7,15}$")
+	bad = [
+		r["to_number"] for r in recipients
+		if not phone_re.match(re.sub(r"[\s\-()]", "", r.get("to_number", "")))
+	]
+	if bad:
+		frappe.throw(
+			f"{len(bad)} recipient(s) have an invalid phone number (e.g. {bad[0]!r}). "
+			"Check that names and phone numbers weren't swapped in the CSV."
+		)
+
 	doc = frappe.get_doc({
 		"doctype": "Whatsnext Campaign",
 		"campaign_name": campaign_name,
@@ -675,6 +687,52 @@ def get_campaign(campaign_name: str):
 			for r in doc.recipients
 		],
 	}
+
+
+@frappe.whitelist()
+def export_campaign_results(campaign_name: str, format: str = "xlsx"):
+	"""Streams the campaign's recipient results as a file download.
+	format: 'xlsx' or 'pdf'."""
+	doc = frappe.get_doc("Whatsnext Campaign", campaign_name)
+
+	headers = ["Phone Number", "Status", "Parameters", "Error", "Message"]
+	rows = [headers]
+	for r in doc.recipients:
+		try:
+			params = ", ".join(str(v) for v in json.loads(r.parameters or "{}").values())
+		except Exception:
+			params = r.parameters or ""
+		rows.append([r.to_number, r.status, params, r.error_message or "", r.message or ""])
+
+	safe_name = frappe.scrub(doc.campaign_name or doc.name)
+
+	if format == "xlsx":
+		from frappe.utils.xlsxutils import make_xlsx
+
+		xlsx_file = make_xlsx(rows, "Campaign Results")
+		frappe.local.response.filename = f"{safe_name}-results.xlsx"
+		frappe.local.response.filecontent = xlsx_file.getvalue()
+		frappe.local.response.type = "binary"
+	elif format == "pdf":
+		from frappe.utils.pdf import get_pdf
+
+		html = frappe.render_template(
+			"whatsnext/templates/campaign_results_pdf.html",
+			{
+				"campaign_name": doc.campaign_name,
+				"template": doc.template,
+				"status": doc.status,
+				"total_recipients": doc.total_recipients,
+				"sent_count": doc.sent_count,
+				"failed_count": doc.failed_count,
+				"rows": rows[1:],
+			},
+		)
+		frappe.local.response.filename = f"{safe_name}-results.pdf"
+		frappe.local.response.filecontent = get_pdf(html)
+		frappe.local.response.type = "download"
+	else:
+		frappe.throw("format must be 'xlsx' or 'pdf'")
 
 
 @frappe.whitelist()
