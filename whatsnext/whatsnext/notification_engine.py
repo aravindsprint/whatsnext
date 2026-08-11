@@ -60,6 +60,20 @@ def _fire(notif, doc):
 	if notif.recipient_number_field:
 		number = doc.get(notif.recipient_number_field) or number
 	if not number:
+		# The configured field (e.g. Sales Invoice's contact_mobile) is a
+		# client-side "Fetch From" field — it only populates when someone
+		# picks the Contact Person in the browser form. Documents created
+		# via API/import/automation skip that fetch and submit with the
+		# field blank, so the notification would otherwise silently no-op
+		# even though the linked Contact does have a number on file.
+		number = _fallback_contact_mobile(doc)
+	if not number:
+		frappe.log_error(
+			f"No recipient number found on {doc.doctype} {doc.name} "
+			f"(field '{notif.recipient_number_field}' was blank and no "
+			f"linked Contact had a mobile number either)",
+			f"Whatsnext notification '{notif.name}' skipped — no recipient number",
+		)
 		return
 
 	params = {}
@@ -82,6 +96,19 @@ def _fire(notif, doc):
 		reference_doctype=doc.doctype,
 		reference_name=doc.name,
 		header_media_url=header_media_url,
+	)
+
+
+def _fallback_contact_mobile(doc):
+	"""Look up the mobile number directly from the linked Contact when the
+	document's own recipient field is empty. Covers Sales Invoice, Sales
+	Order, Delivery Note, Quotation, etc. — anything with a contact_person
+	link — without needing per-doctype configuration."""
+	contact_name = doc.get("contact_person")
+	if not contact_name:
+		return None
+	return frappe.db.get_value("Contact", contact_name, "mobile_no") or frappe.db.get_value(
+		"Contact", contact_name, "phone"
 	)
 
 
