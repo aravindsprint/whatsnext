@@ -5,8 +5,17 @@ from frappe.model.document import Document
 class WhatsnextMessage(Document):
 	def before_insert(self):
 		if not self.conversation_id:
-			# Group by reference_name if we have one, else by counterpart number
-			self.conversation_id = self.reference_name or self.to_number or self.from_number
+			# Always group by the counterpart's WhatsApp number, never by
+			# reference_name. Grouping by reference_name used to mean any
+			# message tied to a business document (a Sales Invoice reminder,
+			# a CRM Lead alert, a Quotation follow-up...) fragmented into its
+			# own separate "conversation" instead of joining the same real
+			# contact's thread -- one customer could show up as half a dozen
+			# different sidebar rows depending on which document last
+			# messaged them. reference_doctype/reference_name are still
+			# stored on every message for traceability; they just no longer
+			# drive chat grouping.
+			self.conversation_id = self.to_number or self.from_number
 
 	def after_insert(self):
 		# Scoped to this document: Frappe only delivers to sessions permitted to
