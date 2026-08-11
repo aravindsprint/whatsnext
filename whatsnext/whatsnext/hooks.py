@@ -37,7 +37,7 @@ WATCHED_DOCTYPES = [
 	"Sales Order", "Purchase Order", "Sales Invoice", "Purchase Invoice",
 	"Payment Entry", "Quotation", "Delivery Note", "Task", "Issue",
 	"Lead", "Opportunity", "Employee", "Leave Application", "Expense Claim",
-	"ToDo", "Contact", "Customer", "Supplier",
+	"ToDo", "Contact", "Customer", "Supplier", "CRM Lead",
 ]
 
 doc_events = {
