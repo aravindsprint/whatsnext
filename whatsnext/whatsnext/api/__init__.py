@@ -252,16 +252,25 @@ def get_conversations(limit: int = 100, offset: int = 0, search: str = None, fil
 
 	where, params = _conversation_scope_where(search)
 
+	# ROW_NUMBER() (tie-broken on the unique `name` column), not MAX()+self-join:
+	# a bulk status update (e.g. marking several messages in one conversation
+	# "Read"/"Delivered" in a single query) can stamp multiple rows with the
+	# exact same `modified` value down to the microsecond. The old
+	# `m.modified = lm.latest` join then matched every tied row, returning
+	# several "latest messages" for one conversation_id — which is what
+	# produced the same contact appearing multiple times in the chat list.
 	rows = frappe.db.sql(
 		"""
-		SELECT m.*
-		FROM `tabWhatsnext Message` m
-		INNER JOIN (
-			SELECT conversation_id, MAX(modified) AS latest
-			FROM `tabWhatsnext Message`
+		SELECT m.* FROM (
+			SELECT m2.*,
+				ROW_NUMBER() OVER (
+					PARTITION BY m2.conversation_id
+					ORDER BY m2.modified DESC, m2.name DESC
+				) AS rn
+			FROM `tabWhatsnext Message` m2
 			WHERE """ + where + """
-			GROUP BY conversation_id
-		) lm ON m.conversation_id = lm.conversation_id AND m.modified = lm.latest
+		) m
+		WHERE m.rn = 1
 		ORDER BY m.modified DESC
 		""",
 		params,
