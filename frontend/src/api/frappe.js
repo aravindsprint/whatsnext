@@ -1,5 +1,17 @@
 let csrfToken = null
 
+// Frappe sets a plain, readable (non-HttpOnly) user_id cookie on every
+// session alongside the HttpOnly sid cookie. window.frappeSession is only
+// ever populated by the real Jinja-rendered whatsnext.html (see
+// www/whatsnext.py) — Vite's own dev index.html never sets it — so this is
+// the fallback that lets isLoggedIn()/getSessionUser() work correctly when
+// running under `npm run dev` instead of always reporting logged-out and
+// bouncing the router back to /login right after a successful login.
+function getCookie(name) {
+  const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'))
+  return match ? decodeURIComponent(match[1]) : null
+}
+
 export function ensureCSRF() {
   if (window.csrf_token && window.csrf_token !== '{{ csrf_token }}') {
     csrfToken = window.csrf_token
@@ -14,12 +26,14 @@ export function ensureCSRF() {
 }
 
 export function isLoggedIn() {
-  const user = window.frappeSession?.user
-  return !!user && user !== 'Guest'
+  const sessionUser = window.frappeSession?.user
+  if (sessionUser) return sessionUser !== 'Guest'
+  const cookieUser = getCookie('user_id')
+  return !!cookieUser && cookieUser !== 'Guest'
 }
 
 export function getSessionUser() {
-  return window.frappeSession?.user || null
+  return window.frappeSession?.user || getCookie('user_id') || null
 }
 
 function buildUrl(method, params, httpMethod) {

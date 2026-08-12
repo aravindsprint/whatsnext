@@ -86,9 +86,48 @@ export default defineConfig(({ command }) => ({
     emptyOutDir: true,
   },
   server: {
+    port: 3000,
+    host: 'whatsnext.local',
     proxy: {
-      '/api': { target: process.env.VITE_DEV_BACKEND || 'http://localhost:8000', changeOrigin: true },
-      '/files': { target: process.env.VITE_DEV_BACKEND || 'http://localhost:8000', changeOrigin: true },
+      '/api': {
+        target: 'https://erp.pranera.in',
+        changeOrigin: true,
+        secure: false,
+        cookieDomainRewrite: 'whatsnext.local',
+        headers: {
+          'Origin': 'https://erp.pranera.in',
+          'Referer': 'https://erp.pranera.in'
+        },
+        configure(proxy) {
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.removeHeader('expect')
+          })
+          proxy.on('proxyRes', (proxyRes) => {
+            const setCookie = proxyRes.headers['set-cookie']
+            if (setCookie) {
+              proxyRes.headers['set-cookie'] = setCookie.map(c =>
+                c.replace(/;\s*Secure/gi, '').replace(/;\s*SameSite=None/gi, '; SameSite=Lax')
+              )
+            }
+          })
+        }
+      },
+      '/assets': {
+        target: 'https://erp.pranera.in',
+        changeOrigin: true,
+        secure: false
+      },
+      '/files': {
+        target: 'https://erp.pranera.in',
+        changeOrigin: true,
+        secure: false
+      },
+      '/socket.io': {
+        target: 'https://erp.pranera.in',
+        changeOrigin: true,
+        secure: false,
+        ws: true
+      }
     },
   },
   resolve: {

@@ -2,7 +2,7 @@ import json
 import frappe
 from werkzeug.wrappers import Response
 
-from whatsnext.whatsnext.contacts import resolve_customer_from_phone
+from whatsnext.whatsnext.contacts import resolve_customer_from_phone, normalize_outbound_number
 
 
 # ---------------------------------------------------------------------------
@@ -59,10 +59,10 @@ def _meta_receive():
 
 
 def _save_incoming_meta_message(msg, value):
-	from_number = msg.get("from")
+	from_number = normalize_outbound_number(msg.get("from"))
 	profile_name = None
 	for contact in value.get("contacts", []):
-		if contact.get("wa_id") == from_number:
+		if contact.get("wa_id") == msg.get("from"):
 			profile_name = contact.get("profile", {}).get("name")
 
 	msg_type = msg.get("type", "text")
@@ -155,8 +155,8 @@ def _update_status_from_meta(status):
 @frappe.whitelist(allow_guest=True, methods=["POST"])
 def twilio_webhook():
 	form = frappe.form_dict
-	from_number = (form.get("From") or "").replace("whatsapp:", "")
-	to_number = (form.get("To") or "").replace("whatsapp:", "")
+	from_number = normalize_outbound_number((form.get("From") or "").replace("whatsapp:", ""))
+	to_number = normalize_outbound_number((form.get("To") or "").replace("whatsapp:", ""))
 	body = form.get("Body") or ""
 	message_sid = form.get("MessageSid") or form.get("SmsSid")
 	num_media = int(form.get("NumMedia") or 0)
