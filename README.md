@@ -83,7 +83,7 @@ See `DEPLOY.md` for the production build/deploy checklist.
 ## Tests
 
 - **Unit tests** (no bench needed; run in CI on every PR):
-  `pip install pytest requests && python -m pytest`
+  `pip install -r tests/requirements.txt && python -m pytest`
 - **Frontend tests**: `cd frontend && npm test`
 - **Integration tests** on a test site (provider calls are mocked; they change Whatsnext Settings, so never run them on production):
   `bench --site <test-site> run-tests --app whatsnext`
