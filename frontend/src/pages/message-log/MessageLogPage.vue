@@ -1,7 +1,11 @@
 <script setup>
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { call } from '@/api/frappe'
+import { parseFrappeDate } from '@/lib/date'
 
+// A real per-message log. This used to call get_conversations, which only
+// returns the latest message of each chat, so most messages never appeared
+// and the status filter only ever looked at those latest ones.
 const messages = ref([])
 const loading = ref(false)
 const statusFilter = ref('All')
@@ -9,18 +13,23 @@ const statusFilter = ref('All')
 async function load() {
   loading.value = true
   try {
-    const res = await call('whatsnext.whatsnext.api.get_conversations', { limit: 200, offset: 0 }, 'GET')
-    messages.value = res.data
+    messages.value = await call(
+      'whatsnext.whatsnext.api.get_message_log',
+      { status: statusFilter.value === 'All' ? undefined : statusFilter.value, limit: 200, offset: 0 },
+      'GET'
+    )
   } finally {
     loading.value = false
   }
 }
 onMounted(load)
+watch(statusFilter, load)
 
-const filtered = computed(() => {
-  if (statusFilter.value === 'All') return messages.value
-  return messages.value.filter((m) => m.status === statusFilter.value)
-})
+// The other party's number: an incoming message's to_number is our own
+// business number.
+function counterpart(m) {
+  return m.type === 'Incoming' ? (m.from_number || m.conversation_id) : (m.to_number || m.conversation_id)
+}
 
 const statuses = ['All', 'Pending', 'Queued', 'Sent', 'Delivered', 'Read', 'Failed']
 </script>
@@ -47,15 +56,15 @@ const statuses = ['All', 'Pending', 'Queued', 'Sent', 'Delivered', 'Read', 'Fail
           </tr>
         </thead>
         <tbody>
-          <tr v-for="m in filtered" :key="m.name">
-            <td>{{ m.to_number || m.from_number }}</td>
+          <tr v-for="m in messages" :key="m.name">
+            <td>{{ counterpart(m) }}</td>
             <td>{{ m.type }}</td>
             <td>{{ m.provider || '—' }}</td>
             <td class="wn-msg-cell">{{ m.template ? '📋 ' + m.template : (m.message || '').slice(0, 60) }}</td>
             <td><span class="wn-status" :class="(m.status || '').toLowerCase()">{{ m.status }}</span></td>
-            <td>{{ new Date(m.modified).toLocaleString() }}</td>
+            <td>{{ parseFrappeDate(m.creation).toLocaleString() }}</td>
           </tr>
-          <tr v-if="!loading && !filtered.length">
+          <tr v-if="!loading && !messages.length">
             <td colspan="6" class="wn-muted">No messages found.</td>
           </tr>
         </tbody>

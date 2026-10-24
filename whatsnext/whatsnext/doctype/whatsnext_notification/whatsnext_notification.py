@@ -1,7 +1,7 @@
 import frappe
 from frappe.model.document import Document
 
-from whatsnext.whatsnext.hooks import WATCHED_DOCTYPES
+from whatsnext.hooks import WATCHED_DOCTYPES
 
 
 class WhatsnextNotification(Document):

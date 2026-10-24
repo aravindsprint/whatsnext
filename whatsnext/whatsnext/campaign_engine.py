@@ -15,6 +15,7 @@ import time
 
 import frappe
 
+from whatsnext.whatsnext.contacts import normalize_outbound_number, resolve_customer_from_phone
 from whatsnext.whatsnext.provider_engine import get_provider, WhatsAppSendError
 
 # Conservative default: 1 message/second stays well under Meta's lowest
@@ -40,12 +41,17 @@ def start_campaign(campaign_name: str):
 
 def run_campaign(campaign_name: str):
 	campaign = frappe.get_doc("Whatsnext Campaign", campaign_name)
-	campaign.db_set("status", "Sending", update_modified=False)
+	# update_modified=True throughout: scheduler.recover_stuck_messages marks
+	# any campaign whose `modified` is >30 minutes old as Failed. With
+	# update_modified=False a healthy campaign of more than ~1,800
+	# recipients (paced at 1/s) was force-failed mid-run.
+	campaign.db_set("status", "Sending")
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background job, status must be visible to the UI's poll
 
 	template = frappe.get_doc("Whatsnext Message Template", campaign.template)
 	provider_name = campaign.provider or None
 
-	sent = delivered = failed = 0
+	sent = failed = 0
 
 	for row in campaign.recipients:
 		if row.status != "Pending":
@@ -65,15 +71,25 @@ def run_campaign(campaign_name: str):
 				params = {}
 
 		try:
+			to_number = normalize_outbound_number(row.to_number)
 			provider = get_provider(provider_name)
-			result = provider.send_template(row.to_number, template.name, params, template.language)
+			# Media-header templates need a header link (same fallback the
+			# chat UI pre-fills); without one Meta rejects every send.
+			result = provider.send_template(
+				to_number, template.name, params, template.language or "en",
+				header_media_url=template.header_example_url or None,
+				header_type=template.header_type,
+			)
 
 			msg = frappe.get_doc({
 				"doctype": "Whatsnext Message",
 				"type": "Outgoing",
 				"provider": provider.name,
 				"status": "Sent",
-				"to_number": row.to_number,
+				"to_number": to_number,
+				# Linked to the customer like every other outgoing message, so
+				# campaign sends appear in the assigned Sales Person's chats.
+				"customer": resolve_customer_from_phone(to_number),
 				"message": template.body,
 				"message_type": "Template",
 				"content_type": "text",
@@ -104,13 +120,28 @@ def run_campaign(campaign_name: str):
 
 		# write progress after every send so the frontend's poll reflects
 		# reality, not just the final count once the whole job finishes
-		campaign.db_set("sent_count", sent, update_modified=False)
-		campaign.db_set("failed_count", failed, update_modified=False)
+		campaign.db_set({"sent_count": sent, "failed_count": failed})
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- long-running background job, must persist progress incrementally
 
 		time.sleep(SEND_INTERVAL_SECONDS)
 
-	campaign.db_set("status", "Completed" if failed == 0 else "Failed" if sent == 0 else "Completed", update_modified=False)
+	# Final counts from the rows themselves: delivery webhooks may already
+	# have moved some recipients on (Delivered/Read, or Failed after Sent)
+	# while this loop was still writing its running totals.
+	counts = dict(frappe.db.sql(
+		"""SELECT status, COUNT(*) FROM `tabWhatsnext Campaign Recipient`
+		WHERE parent = %s AND parenttype = 'Whatsnext Campaign' GROUP BY status""",
+		(campaign.name,),
+	))
+	delivered = counts.get("Delivered", 0) + counts.get("Read", 0)
+	sent = counts.get("Sent", 0) + delivered
+	failed = counts.get("Failed", 0)
+	campaign.db_set({
+		"sent_count": sent,
+		"delivered_count": delivered,
+		"failed_count": failed,
+		"status": "Failed" if sent == 0 and failed else "Completed",
+	})
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- final state must land
 
 

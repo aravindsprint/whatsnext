@@ -1,6 +1,17 @@
 <script setup>
 defineProps({ conversations: Array, activeId: String })
+import { parseFrappeDate } from '@/lib/date'
+
 const emit = defineEmits(['select'])
+
+function formatTime(value) {
+  const d = parseFrappeDate(value)
+  if (isNaN(d)) return ''
+  const today = new Date()
+  return d.toDateString() === today.toDateString()
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString()
+}
 </script>
 
 <template>
@@ -12,11 +23,11 @@ const emit = defineEmits(['select'])
       :class="{ active: (c.conversation_id || c.name) === activeId, unread: c.is_unread }"
       @click="emit('select', c.conversation_id || c.name)"
     >
-      <div class="wn-avatar">{{ (c.profile_name || c.to_number || '?').charAt(0).toUpperCase() }}</div>
+      <div class="wn-avatar">{{ (c.profile_name || c.conversation_id || '?').charAt(0).toUpperCase() }}</div>
       <div class="wn-conv-body">
         <div class="wn-conv-top">
-          <span class="wn-conv-name">{{ c.profile_name || c.to_number || c.from_number }}</span>
-          <span class="wn-conv-time">{{ new Date(c.modified).toLocaleDateString() }}</span>
+          <span class="wn-conv-name">{{ c.profile_name || c.conversation_id || c.to_number || c.from_number }}</span>
+          <span class="wn-conv-time">{{ formatTime(c.modified) }}</span>
         </div>
         <div class="wn-conv-preview">
           <span>{{ c.message || '📎 Media' }}</span>

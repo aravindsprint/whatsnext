@@ -25,7 +25,9 @@ def dispatch_scheduled_messages():
 				params = json.loads(msg.template_parameters)
 			except Exception:
 				params = {}
-		_dispatch(msg, template_doc=template_doc, params=params)
+		# Media-header templates need their header URL back, which lives on
+		# the message's attach field -- without it Meta rejects the send.
+		_dispatch(msg, template_doc=template_doc, params=params, header_media_url=msg.attach or None)
 
 
 def recover_stuck_messages():

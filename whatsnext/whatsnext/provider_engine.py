@@ -27,6 +27,30 @@ def get_provider(provider_name: str | None = None):
 	return MetaProvider(settings)
 
 
+def _json_or_error(resp) -> dict:
+	"""Provider error pages (gateway timeouts, proxies, outages) aren't
+	always JSON; resp.json() then raised a bare decode error that hid the
+	real HTTP status."""
+	try:
+		return resp.json()
+	except ValueError:
+		if resp.status_code >= 400:
+			raise WhatsAppSendError(f"HTTP {resp.status_code}: {(resp.text or '')[:200]}")
+		return {}
+
+
+def _ordered_values(params: dict) -> list:
+	"""Template variables in {{1}}, {{2}}, ... order. Meta matches body
+	parameters by position, so relying on dict insertion order sent values
+	into the wrong slots whenever a notification's field mapping rows weren't
+	entered in numeric order."""
+	def key(k):
+		k = str(k).strip("{} ")
+		return (0, int(k)) if k.isdigit() else (1, k)
+
+	return [params[k] for k in sorted(params, key=key)]
+
+
 class BaseProvider:
 	name = "Base"
 
@@ -64,7 +88,7 @@ class MetaProvider(BaseProvider):
 
 	def _post(self, payload: dict) -> dict:
 		resp = requests.post(self.base_url, headers=self._headers(), data=json.dumps(payload), timeout=30)
-		data = resp.json()
+		data = _json_or_error(resp)
 		if resp.status_code >= 400:
 			raise WhatsAppSendError(data.get("error", {}).get("message", str(data)))
 		return data
@@ -89,7 +113,7 @@ class MetaProvider(BaseProvider):
 		if params:
 			components.append({
 				"type": "body",
-				"parameters": [{"type": "text", "text": str(v)} for v in params.values()],
+				"parameters": [{"type": "text", "text": str(v)} for v in _ordered_values(params)],
 			})
 		payload = {
 			"messaging_product": "whatsapp",
@@ -117,7 +141,7 @@ class MetaProvider(BaseProvider):
 		metadata. Succeeds only if phone_number_id + token are both valid."""
 		url = f"https://graph.facebook.com/{self.version}/{self.phone_number_id}"
 		resp = requests.get(url, headers=self._headers(), params={"fields": "verified_name,display_phone_number,quality_rating"}, timeout=15)
-		data = resp.json()
+		data = _json_or_error(resp)
 		if resp.status_code >= 400:
 			raise WhatsAppSendError(data.get("error", {}).get("message", str(data)))
 		return {
@@ -130,9 +154,18 @@ class MetaProvider(BaseProvider):
 		"""Pull approved/pending templates from Meta so the local template
 		library can reflect real approval_status."""
 		url = f"https://graph.facebook.com/{self.version}/{self.settings.meta_waba_id}/message_templates"
-		resp = requests.get(url, headers=self._headers(), timeout=30)
-		resp.raise_for_status()
-		return resp.json().get("data", [])
+		params = {"limit": 100}
+		templates = []
+		# Meta pages this endpoint (default 25 per page); without following
+		# paging.next, templates beyond the first page were never synced.
+		while url:
+			resp = requests.get(url, headers=self._headers(), params=params, timeout=30)
+			resp.raise_for_status()
+			data = resp.json()
+			templates.extend(data.get("data", []))
+			url = (data.get("paging") or {}).get("next")
+			params = None  # the "next" URL already carries its own query string
+		return templates
 
 	def get_media_metadata(self, media_id: str) -> dict:
 		"""Step 1 of Meta's two-step media download: resolve a media id to a
@@ -172,7 +205,7 @@ class TwilioProvider(BaseProvider):
 
 	def _post(self, data: dict) -> dict:
 		resp = requests.post(self.base_url, data=data, auth=(self.account_sid, self.auth_token), timeout=30)
-		payload = resp.json()
+		payload = _json_or_error(resp)
 		if resp.status_code >= 400:
 			raise WhatsAppSendError(payload.get("message", str(payload)))
 		return payload
@@ -215,7 +248,7 @@ class TwilioProvider(BaseProvider):
 		details. Succeeds only if account_sid + auth_token are both valid."""
 		url = f"https://api.twilio.com/2010-04-01/Accounts/{self.account_sid}.json"
 		resp = requests.get(url, auth=(self.account_sid, self.auth_token), timeout=15)
-		data = resp.json()
+		data = _json_or_error(resp)
 		if resp.status_code >= 400:
 			raise WhatsAppSendError(data.get("message", str(data)))
 		return {

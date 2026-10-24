@@ -1,11 +1,15 @@
 <script setup>
 import { onMounted, ref, computed, nextTick, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
 import { call } from '@/api/frappe'
+import { parseFrappeDate } from '@/lib/date'
 import ConversationList from '@/components/ConversationList.vue'
 import MessageBubble from '@/components/MessageBubble.vue'
 
 const chat = useChatStore()
+const route = useRoute()
+const router = useRouter()
 const draft = ref('')
 const messagesEl = ref(null)
 const showContactInfo = ref(false)
@@ -15,7 +19,7 @@ const mediaData = ref({ media: [], docs: [], audio: [] })
 const mediaLoading = ref(false)
 
 function dateSeparatorLabel(dateStr) {
-  const d = new Date(dateStr)
+  const d = parseFrappeDate(dateStr)
   const today = new Date()
   const yesterday = new Date()
   yesterday.setDate(today.getDate() - 1)
@@ -30,7 +34,7 @@ const timelineItems = computed(() => {
   const items = []
   let lastDateKey = null
   for (const m of chat.activeMessages) {
-    const d = new Date(m.creation)
+    const d = parseFrappeDate(m.creation)
     const dateKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
     if (dateKey !== lastDateKey) {
       items.push({ type: 'separator', key: `sep-${dateKey}`, label: dateSeparatorLabel(m.creation) })
@@ -165,11 +169,23 @@ async function sendTplToActiveConversation() {
   }
 }
 
-onMounted(() => {
-  chat.loadConversations()
-  chat.loadStats()
+onMounted(async () => {
   chat.subscribeRealtime()
+  chat.loadStats()
+  await chat.loadConversations()
+  openConversationFromQuery()
 })
+
+// Push notifications link to /whatsnext?conversation=<number> (see
+// push_engine.notify_new_message); nothing read that parameter, so tapping
+// a notification just landed on the empty chat screen.
+function openConversationFromQuery() {
+  const id = route.query.conversation
+  if (!id || typeof id !== 'string') return
+  selectConversation(id)
+  router.replace({ query: {} })
+}
+watch(() => route.query.conversation, (id) => { if (id) openConversationFromQuery() })
 
 let searchDebounceTimer
 function onSearchInput(e) {
@@ -215,7 +231,13 @@ async function send() {
   if (!text || !activeConversation.value) return
   draft.value = ''
   const to = activeConversationNumber.value
-  await chat.sendText(to, text, activeConversation.value.reference_doctype, activeConversation.value.reference_name)
+  try {
+    await chat.sendText(to, text, activeConversation.value.reference_doctype, activeConversation.value.reference_name)
+  } catch (e) {
+    // Don't silently lose what the user typed when the request fails.
+    if (!draft.value) draft.value = text
+    attachError.value = e.message
+  }
 }
 
 // --- New Chat flow ---------------------------------------------------
@@ -294,11 +316,15 @@ async function sendNewChat() {
     const params = {}
     ncVariables.value.forEach((v, i) => { params[i + 1] = v })
     const phone = ncSelectedContact.value.phone
-    chat.activeConversationId = phone
-    await chat.sendTemplate(phone, ncSelectedTemplate.value.name, params, null, null, ncHeaderMediaUrl.value || undefined)
+    const msg = await chat.sendTemplate(phone, ncSelectedTemplate.value.name, params, null, null, ncHeaderMediaUrl.value || undefined)
     showNewChat.value = false
+    // The backend normalizes the number ("+91 98940 88422" -> "919894088422")
+    // and groups the thread under that, so open the conversation id it
+    // actually used. Opening the raw contact phone matched no conversation
+    // and left the chat pane blank after every new chat.
+    const conversationId = msg?.conversation_id || msg?.to_number || phone
     await chat.loadConversations()
-    await selectConversation(phone)
+    await selectConversation(conversationId)
   } catch (e) {
     ncError.value = e.message
   } finally {
@@ -424,7 +450,7 @@ async function sendNewChat() {
       </div>
       <div class="wn-info-row">
         <span class="wn-info-label">Last Message</span>
-        <span>{{ new Date(activeConversation.modified).toLocaleString() }}</span>
+        <span>{{ parseFrappeDate(activeConversation.modified).toLocaleString() }}</span>
       </div>
     </div>
 

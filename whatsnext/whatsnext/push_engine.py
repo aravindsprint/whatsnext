@@ -2,7 +2,7 @@ import json
 
 import frappe
 
-from whatsnext.whatsnext.permissions import get_allowed_customers
+from whatsnext.whatsnext.permissions import users_who_can_see
 
 
 def get_vapid_keys():
@@ -12,40 +12,56 @@ def get_vapid_keys():
 	keypair baked into the app -- every install gets its own, and installs
 	that never turn push on never pay for generating one at all."""
 	settings = frappe.get_cached_doc("Whatsnext Settings")
+	private_pem = settings.get_password("vapid_private_key", raise_exception=False)
 
-	if settings.vapid_public_key and settings.get_password("vapid_private_key", raise_exception=False):
-		return settings.vapid_public_key, settings.get_password("vapid_private_key")
+	# Earlier versions wrote the private key with db.set_single_value, which
+	# stores it as plain text in tabSingles instead of the encrypted __Auth
+	# table that get_password() reads -- so it was never found again and a
+	# fresh keypair was generated on every call, silently invalidating every
+	# browser subscription bound to the previous public key. Recover such a
+	# key (keeping the public key browsers already subscribed with) by moving
+	# it into encrypted storage.
+	if not private_pem:
+		raw = frappe.db.get_single_value("Whatsnext Settings", "vapid_private_key") or ""
+		if raw.startswith("-----BEGIN"):
+			_store_private_key(raw)
+			private_pem = raw
+
+	if settings.vapid_public_key and private_pem:
+		return settings.vapid_public_key, private_pem
 
 	# py_vapid is a dependency of pywebpush, so it's available wherever
 	# pywebpush is. Keeping the import local means merely importing this
-	# module (e.g. from notification_engine on every doc event) never
-	# requires pywebpush to be installed unless push is actually used.
+	# module never requires pywebpush to be installed unless push is used.
 	from py_vapid import Vapid
 
 	vapid = Vapid()
 	vapid.generate_keys()
 
-	# py_vapid exposes the public key as a cryptography EC public-key object,
-	# not directly as the raw base64url string the browser's Push API
-	# (applicationServerKey) expects -- that has to be the uncompressed EC
-	# point (0x04 || X || Y), derived and encoded ourselves.
+	# The browser's Push API (applicationServerKey) needs the raw
+	# uncompressed EC point (0x04 || X || Y), base64url-encoded.
 	public_key = _b64_urlsafe_public_key(vapid)
 	private_pem = vapid.private_pem().decode("ascii")
 
 	frappe.db.set_single_value("Whatsnext Settings", "vapid_public_key", public_key)
-	frappe.db.set_single_value("Whatsnext Settings", "vapid_private_key", private_pem)
-	# Manual commit is intentional here (unlike a normal request, where
-	# Frappe's own end-of-request commit would be enough): this can run
-	# inside a background job sending a push after a message arrives, and
-	# if something later in that same job fails, an uncommitted keypair
-	# would roll back and silently regenerate on the next call -- which
-	# would permanently break delivery to every subscription a browser had
-	# already created against the old public key (they're bound to it and
-	# can't be repointed at a new one). Committing the keypair the moment
-	# it's generated, before it's ever handed to a browser, avoids that.
+	_store_private_key(private_pem)
+	# Committed immediately: this can run inside a background job, and an
+	# uncommitted keypair that later rolls back would be regenerated on the
+	# next call -- permanently breaking every subscription a browser had
+	# already created against the old public key.
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit
 
 	return public_key, private_pem
+
+
+def _store_private_key(private_pem: str):
+	"""Password fields must go through Frappe's encrypted password store;
+	the Singles row only keeps a mask, like a normal form save does."""
+	from frappe.utils.password import set_encrypted_password
+
+	set_encrypted_password("Whatsnext Settings", "Whatsnext Settings", private_pem, "vapid_private_key")
+	frappe.db.set_single_value("Whatsnext Settings", "vapid_private_key", "*" * 10)
+	frappe.clear_document_cache("Whatsnext Settings", "Whatsnext Settings")
 
 
 def _b64_urlsafe_public_key(vapid) -> str:
@@ -81,7 +97,13 @@ def send_push_to_users(users: list[str], title: str, body: str, url: str = "/wha
 		)
 		return
 
-	public_key, private_key = get_vapid_keys()
+	from py_vapid import Vapid
+
+	_, private_pem = get_vapid_keys()
+	# Hand pywebpush a Vapid object: given a bare string it calls
+	# Vapid.from_string(), which expects base64 DER and can't parse the PEM
+	# we store, so every send failed.
+	private_key = Vapid.from_pem(private_pem.encode())
 	vapid_claims = {"sub": settings.vapid_subject or "mailto:admin@example.com"}
 
 	subscriptions = frappe.get_all(
@@ -127,20 +149,11 @@ def notify_new_message(message_name: str, conversation_id: str, customer: str | 
 	users only get pushes for customers assigned to them (or unassigned
 	conversations); a subscribed user with no Sales Person mapping and no
 	System Manager role gets nothing, same as they'd see nothing in the UI."""
-	subscribed_users = frappe.get_all("Whatsnext Push Subscription", pluck="user", distinct=True)
+	subscribed_users = set(frappe.get_all("Whatsnext Push Subscription", pluck="user", distinct=True))
 	if not subscribed_users:
 		return
 
-	recipients = []
-	for user in subscribed_users:
-		allowed_customers = get_allowed_customers(user)
-		if allowed_customers is None:  # unrestricted
-			recipients.append(user)
-		elif not customer:  # unassigned conversation -- visible to everyone in the UI
-			recipients.append(user)
-		elif customer in allowed_customers:
-			recipients.append(user)
-
+	recipients = [u for u in users_who_can_see(customer) if u in subscribed_users]
 	if not recipients:
 		return
 
