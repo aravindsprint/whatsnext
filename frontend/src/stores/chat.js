@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { call } from '@/api/frappe'
 import { cacheConversations, getCachedConversations, cacheMessages, getCachedMessages } from '@/db'
-import { onNewMessage } from '@/realtime'
+import { onNewMessage, onMessageUpdate } from '@/realtime'
 
 export const useChatStore = defineStore('chat', {
   state: () => ({
@@ -20,8 +20,15 @@ export const useChatStore = defineStore('chat', {
   actions: {
     async loadConversations() {
       this.loadingConversations = true
-      // Show cached data immediately, then refresh from the server
-      this.conversations = await getCachedConversations()
+      // Each search keystroke / realtime event starts a new request; only
+      // the newest may write, otherwise a slow earlier response (e.g. the
+      // unfiltered list) could overwrite the results for the current search.
+      const requestId = (this._conversationsRequestId = (this._conversationsRequestId || 0) + 1)
+      // Show cached data immediately (first load only — the cache is
+      // unfiltered, so showing it mid-search flashed the wrong list).
+      if (!this.conversations.length && !this.search) {
+        this.conversations = await getCachedConversations()
+      }
       try {
         const res = await call('whatsnext.whatsnext.api.get_conversations', {
           limit: 100,
@@ -29,10 +36,11 @@ export const useChatStore = defineStore('chat', {
           search: this.search || undefined,
           filter: this.filter === 'all' ? undefined : this.filter,
         }, 'GET')
+        if (requestId !== this._conversationsRequestId) return
         this.conversations = res.data
-        cacheConversations(res.data)
+        if (!this.search && this.filter === 'all') cacheConversations(res.data)
       } finally {
-        this.loadingConversations = false
+        if (requestId === this._conversationsRequestId) this.loadingConversations = false
       }
     },
     async loadStats() {
@@ -110,6 +118,14 @@ export const useChatStore = defineStore('chat', {
         this.loadConversations()
         this.loadStats()
       })
+      // Delivery/read receipts for messages already on screen.
+      const offUpdate = onMessageUpdate((evt) => {
+        const list = this.messagesByConversation[evt.conversation_id]
+        const msg = list?.find((m) => m.name === evt.name)
+        if (msg) msg.status = evt.status
+      })
+      const offNew = this._unsubscribeRealtime
+      this._unsubscribeRealtime = () => { offNew(); offUpdate() }
     },
     async sendTemplate(to, template, parameters, referenceDoctype, referenceName, headerMediaUrl) {
       const msg = await call('whatsnext.whatsnext.api.send_template_message', {

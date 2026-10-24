@@ -1,4 +1,6 @@
 <script setup>
+import { parseFrappeDate } from '@/lib/date'
+
 const props = defineProps({ message: Object })
 
 const statusIcon = { Sent: '✓', Delivered: '✓✓', Read: '✓✓', Failed: '⚠️', Pending: '🕒', Queued: '🕒' }
@@ -28,7 +30,7 @@ const statusIcon = { Sent: '✓', Delivered: '✓✓', Read: '✓✓', Failed: '
       <div class="wn-bubble-content">
         <p v-if="message.message">{{ message.message }}</p>
         <div class="wn-bubble-meta">
-          <span>{{ new Date(message.creation).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}</span>
+          <span>{{ parseFrappeDate(message.creation).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}</span>
           <span v-if="message.type === 'Outgoing'" :class="{ read: message.status === 'Read' }">{{ statusIcon[message.status] || '' }}</span>
         </div>
       </div>

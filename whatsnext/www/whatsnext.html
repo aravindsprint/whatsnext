@@ -25,7 +25,9 @@
 	<script>
 		window.csrf_token = "{{ csrf_token }}";
 		window.frappeSession = {
-			user: "{{ frappe.session.user }}",
+			user: {{ frappe.session.user | tojson }},
+			site: {{ site_name | tojson }},
+			frappeMajorVersion: {{ frappe_major_version | tojson }},
 		};
 	</script>
 

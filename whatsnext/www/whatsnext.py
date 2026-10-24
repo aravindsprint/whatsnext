@@ -19,6 +19,13 @@ def get_context(context):
 	# (checking isLoggedIn()) handles showing the login form.
 	context.csrf_token = frappe.sessions.get_csrf_token()
 	context.no_cache = 1
+	# The socket.io client needs these to connect: Frappe v15+ serves
+	# realtime on a per-site namespace ("/<site>"), v14 on the default "/".
+	context.site_name = frappe.local.site
+	try:
+		context.frappe_major_version = int(frappe.__version__.split(".")[0])
+	except (ValueError, AttributeError):
+		context.frappe_major_version = 15
 
 	entry = _resolve_built_assets()
 	context.js_entry = entry["js"]

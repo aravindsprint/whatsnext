@@ -37,24 +37,51 @@ def _dispatch_for_event(doc, event):
 	if not notifications:
 		return
 
+	# Sent from a background job after the triggering transaction commits,
+	# not inline: an inline send blocks the user's save on provider HTTP
+	# calls / PDF rendering, and its failure path (_mark_failed) commits the
+	# database mid-transaction -- persisting a half-saved document even if a
+	# later hook goes on to fail. The condition is still evaluated now, against
+	# the document exactly as it was when the event fired.
 	for name in notifications:
 		notif = frappe.get_cached_doc("Whatsnext Notification", name)
 		try:
-			_fire(notif, doc)
+			if not _condition_matches(notif, doc):
+				continue
+			frappe.enqueue(
+				"whatsnext.whatsnext.notification_engine.run_notification",
+				queue="short",
+				enqueue_after_commit=True,
+				notification=name,
+				doctype=doc.doctype,
+				docname=doc.name,
+			)
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), f"Whatsnext notification '{name}' failed for {doc.doctype} {doc.name}")
 
 
-def _fire(notif, doc):
-	if notif.condition:
-		# Only "doc" is exposed here — deliberately NOT the raw frappe module.
-		# safe_eval already provides its own restricted frappe.* namespace
-		# (frappe.db.get_value, frappe.utils.*, etc; see its docstring for
-		# the full allowed list). Passing the real `frappe` module as a
-		# local would bypass that restriction entirely and let a configured
-		# condition call anything, including frappe.db.sql or delete_doc.
-		if not safe_eval(notif.condition, {"doc": doc}):  # nosemgrep: frappe-codeinjection-eval -- sandboxed via frappe.utils.safe_exec.safe_eval, not builtin eval; only "doc" is exposed, no frappe module access
-			return
+def run_notification(notification, doctype, docname):
+	notif = frappe.get_doc("Whatsnext Notification", notification)
+	doc = frappe.get_doc(doctype, docname)
+	try:
+		_fire(notif, doc, check_condition=False)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), f"Whatsnext notification '{notification}' failed for {doctype} {docname}")
+
+
+def _condition_matches(notif, doc):
+	if not notif.condition:
+		return True
+	# Only "doc" is exposed here — deliberately NOT the raw frappe module.
+	# safe_eval already provides its own restricted frappe.* namespace
+	# (frappe.db.get_value, frappe.utils.*, etc). Passing the real `frappe`
+	# module as a local would bypass that restriction entirely.
+	return bool(safe_eval(notif.condition, {"doc": doc}))  # nosemgrep: frappe-codeinjection-eval -- sandboxed via frappe.utils.safe_exec.safe_eval, only "doc" is exposed
+
+
+def _fire(notif, doc, check_condition=True):
+	if check_condition and not _condition_matches(notif, doc):
+		return
 
 	number = notif.fixed_number
 	if notif.recipient_number_field:
@@ -80,7 +107,12 @@ def _fire(notif, doc):
 	for row in notif.field_mapping:
 		value = row.static_value
 		if row.source_fieldname:
-			value = doc.get(row.source_fieldname, value)
+			# doc.get(field, default) only falls back when the field is
+			# missing entirely, not when it's present but empty -- an empty
+			# value would send a blank template variable, which Meta rejects.
+			field_value = doc.get(row.source_fieldname)
+			if field_value not in (None, ""):
+				value = field_value
 		params[row.template_variable] = value
 
 	header_media_url = None

@@ -2,6 +2,25 @@ import frappe
 from frappe.model.document import Document
 
 
+def publish_message_event(msg, event="whatsnext_message_update"):
+	"""Send a realtime event to every user permitted to see this message's
+	conversation. Published per user (their own socket room) rather than to
+	the document's room: nobody is subscribed to a brand-new document's
+	room, so doc-scoped events were never delivered to any open chat.
+	`msg` can be a Document or a dict with the same keys."""
+	from whatsnext.whatsnext.permissions import users_who_can_see
+
+	get = msg.get
+	payload = {
+		"name": get("name"),
+		"conversation_id": get("conversation_id"),
+		"type": get("type"),
+		"status": get("status"),
+	}
+	for user in users_who_can_see(get("customer")):
+		frappe.publish_realtime(event=event, message=payload, user=user, after_commit=True)
+
+
 class WhatsnextMessage(Document):
 	def before_insert(self):
 		if not self.conversation_id:
@@ -18,22 +37,9 @@ class WhatsnextMessage(Document):
 			self.conversation_id = self.to_number or self.from_number
 
 	def after_insert(self):
-		# Scoped to this document: Frappe only delivers to sessions permitted to
-		# read this Whatsnext Message (via the has_permission/
-		# permission_query_conditions hooks already registered for this
-		# doctype), instead of broadcasting to every connected user on the site.
-		frappe.publish_realtime(
-			event="whatsnext_new_message",
-			message={
-				"name": self.name,
-				"conversation_id": self.conversation_id,
-				"type": self.type,
-				"status": self.status,
-			},
-			doctype=self.doctype,
-			docname=self.name,
-			after_commit=True,
-		)
+		# Delivered only to users permitted to see this conversation, never
+		# broadcast site-wide (see publish_message_event).
+		publish_message_event(self, event="whatsnext_new_message")
 
 		# Push a real OS notification for inbound messages (outbound/sent
 		# messages don't need one -- the sender already knows they sent it).

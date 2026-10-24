@@ -5,6 +5,7 @@ import StatCard from '@/components/StatCard.vue'
 import DonutChart from '@/components/DonutChart.vue'
 import LineChart from '@/components/LineChart.vue'
 import { useRouter } from 'vue-router'
+import { parseFrappeDate } from '@/lib/date'
 
 const dashboard = useDashboardStore()
 const router = useRouter()
@@ -23,7 +24,7 @@ const donutSegments = computed(() => {
 
 const weeklyPoints = computed(() =>
   (dashboard.stats?.weekly_overview || []).map((w) => ({
-    label: new Date(w.day).toLocaleDateString(undefined, { weekday: 'short' }),
+    label: parseFrappeDate(w.day).toLocaleDateString(undefined, { weekday: 'short' }),
     value: w.sent,
   }))
 )

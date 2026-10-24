@@ -94,6 +94,11 @@ def sync_templates_from_meta():
 			ctype = (comp.get("type") or "").upper()
 			if ctype == "HEADER":
 				header_type = (comp.get("format") or "Text").title()
+				# Only these exist as Header Type options; anything else
+				# (e.g. LOCATION headers) failed Select validation and
+				# aborted the whole sync on that one template.
+				if header_type not in ("Text", "Image", "Document", "Video"):
+					header_type = "None"
 				if header_type == "Text":
 					header_text = comp.get("text", "")
 				else:
@@ -289,8 +294,29 @@ def get_conversations(limit: int = 100, offset: int = 0, search: str = None, fil
 		)
 		unread_ids = {r[0] for r in unread_rows}
 
+		# The latest message is often an outgoing one, which carries no
+		# profile_name -- the chat list then showed a bare number (or, for
+		# incoming-first fallbacks, our own business number) instead of the
+		# contact's name. Take the most recent name the contact sent us.
+		name_rows = frappe.db.sql(
+			"""
+			SELECT conversation_id, profile_name FROM (
+				SELECT conversation_id, profile_name,
+					ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY creation DESC, name DESC) AS rn
+				FROM `tabWhatsnext Message`
+				WHERE profile_name IS NOT NULL AND profile_name != '' AND conversation_id IN %(ids)s
+			) t WHERE rn = 1
+			""",
+			{"ids": conv_ids},
+		)
+		profile_names = dict(name_rows)
+	else:
+		profile_names = {}
+
 	for r in rows:
 		r["is_unread"] = r["conversation_id"] in unread_ids
+		if not r.get("profile_name"):
+			r["profile_name"] = profile_names.get(r["conversation_id"])
 
 	if filter == "unread":
 		rows = [r for r in rows if r["is_unread"]]
@@ -309,17 +335,30 @@ def get_conversations(limit: int = 100, offset: int = 0, search: str = None, fil
 	}
 
 
+def _assert_conversation_access(conversation_id: str):
+	"""Same visibility rule as the chat list: a restricted user may open a
+	conversation only if every customer it's linked to is theirs (or it's
+	unassigned). Checking just one arbitrary message's customer let a
+	conversation slip through when its messages were linked to different
+	customers."""
+	customers = get_allowed_customers()
+	if customers is None:
+		return
+	linked = frappe.get_all(
+		"Whatsnext Message",
+		filters={"conversation_id": conversation_id, "customer": ["is", "set"]},
+		pluck="customer",
+		distinct=True,
+	)
+	if any(c not in customers for c in linked):
+		frappe.throw("You are not permitted to view this conversation.", frappe.PermissionError)
+
+
 @frappe.whitelist()
 def get_conversation_media(conversation_id: str):
 	"""All messages in a conversation that carry an attachment, grouped by
 	kind, for the Media & Files side panel."""
-	customers = get_allowed_customers()
-	if customers is not None:
-		msg_customer = frappe.db.get_value(
-			"Whatsnext Message", {"conversation_id": conversation_id}, "customer"
-		)
-		if msg_customer and msg_customer not in customers:
-			frappe.throw("You are not permitted to view this conversation.", frappe.PermissionError)
+	_assert_conversation_access(conversation_id)
 
 	rows = frappe.get_all(
 		"Whatsnext Message",
@@ -363,29 +402,32 @@ def get_conversation_stats():
 
 @frappe.whitelist()
 def get_messages(conversation_id: str, limit: int = 100, offset: int = 0):
-	customers = get_allowed_customers()
-	if customers is not None:
-		msg_customer = frappe.db.get_value(
-			"Whatsnext Message", {"conversation_id": conversation_id}, "customer"
-		)
-		if msg_customer and msg_customer not in customers:
-			frappe.throw("You are not permitted to view this conversation.", frappe.PermissionError)
+	_assert_conversation_access(conversation_id)
 
-	return frappe.get_all(
+	# Newest `limit` messages, returned oldest-first for display. Ordering
+	# ascending with a limit returned the *oldest* 200 messages, so in any
+	# long-running chat new messages (including the one just sent or
+	# received) never appeared.
+	rows = frappe.get_all(
 		"Whatsnext Message",
 		filters={"conversation_id": conversation_id},
 		fields=MESSAGE_FIELDS,
-		order_by="creation asc",
+		order_by="creation desc, name desc",
 		limit_page_length=int(limit),
 		limit_start=int(offset),
 	)
+	rows.reverse()
+	return rows
 
 
 @frappe.whitelist()
 def mark_as_read(conversation_id: str):
+	_assert_conversation_access(conversation_id)
+	# Only unread (Delivered) messages: re-stamping every incoming message in
+	# the thread bumped their `modified` on each open for no reason.
 	frappe.db.set_value(
 		"Whatsnext Message",
-		{"conversation_id": conversation_id, "type": "Incoming"},
+		{"conversation_id": conversation_id, "type": "Incoming", "status": "Delivered"},
 		"status",
 		"Read",
 	)
@@ -445,7 +487,7 @@ def send_template_message(to: str, template: str, parameters: str | dict | None 
 		parameters = json.loads(parameters) if parameters else {}
 	parameters = parameters or {}
 
-	if tpl.header_type not in (None, "None", "Text") and not header_media_url:
+	if tpl.header_type not in (None, "", "None", "Text") and not header_media_url:
 		frappe.throw(f"Template '{template}' has a {tpl.header_type} header — a header_media_url is required to send it.")
 
 	# Mirror the header media on our own record too, not just the outbound
@@ -520,6 +562,25 @@ def _extract_provider_message_id(provider_name, result):
 	if provider_name == "Twilio":
 		return result.get("sid")
 	return None
+
+
+@frappe.whitelist()
+def get_message_log(status: str | None = None, limit: int = 200, offset: int = 0):
+	"""Every message (not just the latest per conversation), newest first,
+	for the Message Logs page. Uses get_list so the doctype's permission
+	query conditions apply the same customer scoping as the chat list."""
+	status = _clean_param(status)
+	filters = {}
+	if status and status != "All":
+		filters["status"] = status
+	return frappe.get_list(
+		"Whatsnext Message",
+		filters=filters,
+		fields=MESSAGE_FIELDS,
+		order_by="creation desc",
+		limit_page_length=int(limit),
+		limit_start=int(offset),
+	)
 
 
 @frappe.whitelist()
@@ -631,8 +692,8 @@ def create_campaign(campaign_name: str, template: str, recipients: str | list, p
 
 	phone_re = re.compile(r"^\+?\d{7,15}$")
 	bad = [
-		r["to_number"] for r in recipients
-		if not phone_re.match(re.sub(r"[\s\-()]", "", r.get("to_number", "")))
+		r.get("to_number") for r in recipients
+		if not phone_re.match(re.sub(r"[\s\-()]", "", r.get("to_number") or ""))
 	]
 	if bad:
 		frappe.throw(
@@ -648,7 +709,10 @@ def create_campaign(campaign_name: str, template: str, recipients: str | list, p
 		"status": "Draft",
 		"recipients": [
 			{
-				"to_number": r["to_number"],
+				# Same normalization as one-off sends: raw CSV numbers like
+				# "+91 98940 88422" or a bare 10-digit local number went to
+				# the provider as-is and failed or misrouted.
+				"to_number": normalize_outbound_number(r["to_number"]),
 				"parameters": json.dumps(r.get("parameters", {})),
 				"status": "Pending",
 			}
@@ -662,6 +726,12 @@ def create_campaign(campaign_name: str, template: str, recipients: str | list, p
 @frappe.whitelist()
 def start_campaign(campaign_name: str):
 	from whatsnext.whatsnext.campaign_engine import start_campaign as _start
+
+	# A double-click or a second tab used to enqueue a second send loop for
+	# the same campaign, messaging every pending recipient twice.
+	status = frappe.db.get_value("Whatsnext Campaign", campaign_name, "status")
+	if status in ("Queued", "Sending"):
+		frappe.throw(f"Campaign '{campaign_name}' is already {status.lower()}.")
 
 	frappe.db.set_value("Whatsnext Campaign", campaign_name, "status", "Queued")
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- explicit user action, needs to land before enqueue races the UI's next poll
@@ -754,14 +824,18 @@ def dashboard_stats():
 		"""
 		SELECT status, COUNT(*) AS cnt
 		FROM `tabWhatsnext Message`
+		WHERE type = 'Outgoing'
 		GROUP BY status
 		""",
 		as_dict=True,
 	)
 	status_counts = {row.status: row.cnt for row in counts}
 
-	message_queue = frappe.db.count("Whatsnext Message", {"status": ["in", ["Pending", "Queued"]]})
-	scheduled_jobs = frappe.db.count("Whatsnext Message", {"scheduled_time": ["is", "set"], "status": ["in", ["Pending", "Queued"]]})
+	# Delivery figures cover outgoing messages only: incoming messages are
+	# stored as Delivered/Read too, which inflated "delivered" and the
+	# delivery percentage with messages we never sent.
+	message_queue = frappe.db.count("Whatsnext Message", {"type": "Outgoing", "status": ["in", ["Pending", "Queued"]]})
+	scheduled_jobs = frappe.db.count("Whatsnext Message", {"type": "Outgoing", "scheduled_time": ["is", "set"], "status": ["in", ["Pending", "Queued"]]})
 
 	delivered = status_counts.get("Delivered", 0) + status_counts.get("Read", 0)
 	failed = status_counts.get("Failed", 0)
@@ -769,11 +843,11 @@ def dashboard_stats():
 	total_sent = sum(status_counts.values())
 	delivered_pct = round((delivered / total_sent) * 100, 1) if total_sent else 0
 
-	weekly = frappe.db.sql(
+	weekly_rows = frappe.db.sql(
 		"""
 		SELECT DATE(creation) AS day,
 			SUM(CASE WHEN type='Outgoing' THEN 1 ELSE 0 END) AS sent,
-			SUM(CASE WHEN status IN ('Delivered','Read') THEN 1 ELSE 0 END) AS delivered
+			SUM(CASE WHEN type='Outgoing' AND status IN ('Delivered','Read') THEN 1 ELSE 0 END) AS delivered
 		FROM `tabWhatsnext Message`
 		WHERE DATE(creation) BETWEEN %(start)s AND %(end)s
 		GROUP BY DATE(creation)
@@ -782,6 +856,19 @@ def dashboard_stats():
 		{"start": week_start, "end": today},
 		as_dict=True,
 	)
+	# One point per day for the whole week, zero-filled -- days with no
+	# messages used to be missing entirely, so the chart's x-axis skipped
+	# them and the line implied activity that never happened.
+	by_day = {getdate(r.day): r for r in weekly_rows}
+	weekly = []
+	for i in range(7):
+		day = getdate(add_to_date(week_start, days=i))
+		r = by_day.get(day)
+		weekly.append({
+			"day": str(day),
+			"sent": int(r.sent or 0) if r else 0,
+			"delivered": int(r.delivered or 0) if r else 0,
+		})
 
 	top_templates = frappe.db.sql(
 		"""
@@ -804,7 +891,7 @@ def dashboard_stats():
 
 	return {
 		"message_queue": message_queue,
-		"sent_this_week": sum(r.sent for r in weekly) if weekly else 0,
+		"sent_this_week": sum(r["sent"] for r in weekly),
 		"failed_messages": failed,
 		"scheduled_jobs": scheduled_jobs,
 		"delivery_status": {

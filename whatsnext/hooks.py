@@ -18,32 +18,51 @@ fixtures = [
 
 # Document Events
 # ------------------
-# Generic hook fired on submit/update/change for ANY doctype so we can check
-# whether a Whatsnext Notification is configured against it.
+# Whatsnext Notification: realtime dispatch for a curated set of common
+# business doctypes. Anything NOT in this list can still be watched via the
+# "Scheduled" event (polled every 5 minutes by
+# scheduler.dispatch_scheduled_doctype_notifications). A "*" wildcard is
+# deliberately NOT used: it fires on every document operation site-wide.
+# whatsnext_notification.py's validate() refuses to save a realtime event
+# against a doctype outside this list, so a configuration can never end up
+# silently dead.
+#
+# To add realtime support for another doctype, add it here.
+WATCHED_DOCTYPES = [
+	"Sales Order", "Purchase Order", "Sales Invoice", "Purchase Invoice",
+	"Payment Entry", "Quotation", "Delivery Note", "Task", "Issue",
+	"Lead", "Opportunity", "Employee", "Leave Application", "Expense Claim",
+	"ToDo", "Contact", "Customer", "Supplier", "CRM Lead",
+]
+
 doc_events = {
-    "*": {
-        "on_submit": "whatsnext.whatsnext.notification_engine.on_submit",
-        "on_update": "whatsnext.whatsnext.notification_engine.on_update",
-        "on_change": "whatsnext.whatsnext.notification_engine.on_change",
-    }
+	doctype: {
+		"after_insert": "whatsnext.whatsnext.notification_engine.after_insert",
+		"on_submit": "whatsnext.whatsnext.notification_engine.on_submit",
+		"on_update": "whatsnext.whatsnext.notification_engine.on_update",
+		"on_change": "whatsnext.whatsnext.notification_engine.on_change",
+	}
+	for doctype in WATCHED_DOCTYPES
 }
 
 # Scheduled Tasks
 # ------------------
 scheduler_events = {
-    "cron": {
-        # Every 5 minutes: dispatch anything queued/scheduled that's due
-        "*/5 * * * *": [
-            "whatsnext.whatsnext.scheduler.dispatch_scheduled_messages",
-        ],
-        # Every 15 minutes: safety net for stuck-in-flight messages (see build spec §10)
-        "*/15 * * * *": [
-            "whatsnext.whatsnext.scheduler.recover_stuck_messages",
-        ],
-    },
-    "daily": [
-        "whatsnext.whatsnext.scheduler.refresh_template_approval_status",
-    ],
+	"cron": {
+		"*/5 * * * *": [
+			# Pending messages whose scheduled_time has arrived
+			"whatsnext.whatsnext.scheduler.dispatch_scheduled_messages",
+			# Polling counterpart to doc_events for "Scheduled" notifications
+			"whatsnext.whatsnext.scheduler.dispatch_scheduled_doctype_notifications",
+		],
+		# Safety net for messages/campaigns stuck in flight
+		"*/15 * * * *": [
+			"whatsnext.whatsnext.scheduler.recover_stuck_messages",
+		],
+		"0 2 * * *": [
+			"whatsnext.whatsnext.scheduler.refresh_template_approval_status",
+		],
+	},
 }
 
 # Installation

@@ -63,3 +63,28 @@ def has_message_permission(doc, user=None, permission_type=None):
 	if not doc.customer:
 		return True
 	return doc.customer in customers
+
+
+def users_who_can_see(customer: str | None) -> list[str]:
+	"""Enabled users allowed to see a conversation for `customer`, using the
+	same rules as has_message_permission: unrestricted users always, Sales
+	Person-mapped users when the customer is theirs or the chat is
+	unassigned. Used to target realtime events and push notifications so
+	they reach exactly the people who can open the chat."""
+	candidates = frappe.get_all(
+		"Has Role",
+		filters={"parenttype": "User", "role": ["in", ["Whatsnext User", "System Manager"]]},
+		pluck="parent",
+		distinct=True,
+	)
+	candidates = set(candidates) | {"Administrator"}
+	enabled = set(
+		frappe.get_all("User", filters={"name": ["in", list(candidates)], "enabled": 1}, pluck="name")
+	)
+
+	users = []
+	for user in enabled:
+		allowed = get_allowed_customers(user)
+		if allowed is None or not customer or customer in allowed:
+			users.append(user)
+	return users

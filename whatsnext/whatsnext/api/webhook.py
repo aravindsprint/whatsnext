@@ -141,10 +141,81 @@ def _update_status_from_meta(status):
 	new_status = {"sent": "Sent", "delivered": "Delivered", "read": "Read", "failed": "Failed"}.get(status.get("status"))
 	if not (provider_message_id and new_status):
 		return
-	name = frappe.db.get_value("Whatsnext Message", {"provider_message_id": provider_message_id})
-	if name:
-		frappe.db.set_value("Whatsnext Message", name, "status", new_status)
-		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- webhook request
+	error = None
+	if new_status == "Failed":
+		e = (status.get("errors") or [{}])[0]
+		error = (e.get("error_data") or {}).get("details") or e.get("message") or e.get("title") or "Meta reported delivery failure"
+	_apply_status_update(provider_message_id, new_status, error)
+
+
+# Delivery receipts can arrive out of order (a "delivered" webhook landing
+# after "read", or a late "sent"); applying them blindly moved messages
+# backwards, e.g. Read -> Delivered.
+_STATUS_RANK = {"Pending": 0, "Queued": 1, "Sent": 2, "Delivered": 3, "Read": 4}
+
+
+def _apply_status_update(provider_message_id, new_status, error=None):
+	row = frappe.db.get_value(
+		"Whatsnext Message", {"provider_message_id": provider_message_id},
+		["name", "status", "conversation_id", "type", "customer", "reference_doctype", "reference_name"],
+		as_dict=True,
+	)
+	if not row:
+		return
+
+	current = row.status or "Pending"
+	if new_status == "Failed":
+		if current in ("Delivered", "Read"):
+			return
+	elif current == "Failed" or _STATUS_RANK.get(new_status, 0) <= _STATUS_RANK.get(current, 0):
+		return
+
+	updates = {"status": new_status}
+	if error:
+		updates["error_message"] = str(error)[:140]
+	frappe.db.set_value("Whatsnext Message", row.name, updates)
+
+	if row.reference_doctype == "Whatsnext Campaign" and row.reference_name:
+		_update_campaign_recipient(row.reference_name, row.name, new_status, error)
+
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- webhook request
+
+	# Status changes bypass document hooks (db.set_value), so tell open
+	# chats directly -- otherwise tick marks never updated live.
+	from whatsnext.whatsnext.doctype.whatsnext_message.whatsnext_message import publish_message_event
+
+	row.status = new_status
+	publish_message_event(row, event="whatsnext_message_update")
+
+
+def _update_campaign_recipient(campaign, message_name, new_status, error=None):
+	"""Carry delivery receipts through to the campaign's recipient row and
+	counters -- delivered_count was otherwise never updated after a send."""
+	recipient = frappe.db.get_value(
+		"Whatsnext Campaign Recipient", {"parent": campaign, "message": message_name}, "name"
+	)
+	if not recipient:
+		return
+	updates = {"status": new_status}
+	if error:
+		updates["error_message"] = str(error)[:140]
+	frappe.db.set_value("Whatsnext Campaign Recipient", recipient, updates, update_modified=False)
+
+	counts = dict(frappe.db.sql(
+		"""SELECT status, COUNT(*) FROM `tabWhatsnext Campaign Recipient`
+		WHERE parent = %s AND parenttype = 'Whatsnext Campaign' GROUP BY status""",
+		(campaign,),
+	))
+	delivered = counts.get("Delivered", 0) + counts.get("Read", 0)
+	frappe.db.set_value(
+		"Whatsnext Campaign", campaign,
+		{
+			"delivered_count": delivered,
+			"failed_count": counts.get("Failed", 0),
+			"sent_count": counts.get("Sent", 0) + delivered,
+		},
+		update_modified=False,
+	)
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +247,7 @@ def twilio_webhook():
 			content_type = "document"
 
 	if message_sid and frappe.db.exists("Whatsnext Message", {"provider_message_id": message_sid}):
-		return
+		return _twiml_ok()
 
 	doc = frappe.get_doc({
 		"doctype": "Whatsnext Message",
@@ -194,8 +265,15 @@ def twilio_webhook():
 	})
 	doc.insert(ignore_permissions=True)
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- webhook request
-	frappe.response.type = "text"
-	return ""
+	return _twiml_ok()
+
+
+def _twiml_ok():
+	"""Empty TwiML reply. `frappe.response.type = "text"` isn't a valid
+	Frappe response type (see _meta_verify above), so both Twilio endpoints
+	answered every webhook with a 500 and Twilio logged errors/retried. A raw
+	Response bypasses Frappe's response builder."""
+	return Response("<Response></Response>", status=200, mimetype="text/xml")
 
 
 @frappe.whitelist(allow_guest=True, methods=["POST"])
@@ -208,12 +286,8 @@ def twilio_status_callback():
 	}
 	new_status = status_map.get((form.get("MessageStatus") or "").lower())
 	if message_sid and new_status:
-		name = frappe.db.get_value("Whatsnext Message", {"provider_message_id": message_sid})
-		if name:
-			updates = {"status": new_status}
-			if new_status == "Failed":
-				updates["error_message"] = form.get("ErrorMessage") or f"Twilio error {form.get('ErrorCode', '')}"
-			frappe.db.set_value("Whatsnext Message", name, updates)
-			frappe.db.commit()  # nosemgrep: frappe-manual-commit -- webhook request
-	frappe.response.type = "text"
-	return ""
+		error = None
+		if new_status == "Failed":
+			error = form.get("ErrorMessage") or f"Twilio error {form.get('ErrorCode', '')}"
+		_apply_status_update(message_sid, new_status, error)
+	return _twiml_ok()
