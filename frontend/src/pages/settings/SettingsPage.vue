@@ -93,7 +93,7 @@ async function save() {
       'twilio_account_sid', 'twilio_whatsapp_number', 'twilio_auth_token', 'twilio_verify_signature',
       'vapid_subject', 'push_notifications_enabled',
       'opt_out_enabled', 'opt_out_keywords', 'opt_in_keywords', 'opt_out_confirmation', 'opt_in_confirmation',
-      'send_read_receipts', 'business_days', 'business_hours_start', 'business_hours_end', 'holiday_list',
+      'campaign_send_interval', 'send_read_receipts', 'business_days', 'business_hours_start', 'business_hours_end', 'holiday_list',
       'away_message', 'away_cooldown_hours', 'away_enabled',
       'meta_enabled', 'twilio_enabled',
     ]
@@ -180,6 +180,9 @@ async function testConnection(provider) {
         <label>Failure Notification Email</label>
         <input v-model="settings.failure_notification_email" type="email" />
       </template>
+      <label>Campaign send interval (seconds between messages)</label>
+      <input v-model.number="settings.campaign_send_interval" type="number" min="0.1" step="0.1" />
+      <p class="wn-hint">1 second is safe for most numbers. Go lower only if your WhatsApp number is on a high messaging tier.</p>
       <label>Default Country Code</label>
       <input v-model="settings.default_country_code" type="text" placeholder="91" />
       <p class="wn-hint">Prepended to outbound numbers with no country code (e.g. a bare 10-digit number).</p>

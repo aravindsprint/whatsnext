@@ -18,6 +18,7 @@ const links = [
   { to: '/whatsnext/campaigns', label: 'Campaigns', icon: '📢' },
   { to: '/whatsnext/recipients', label: 'Recipients', icon: '👥' },
   { to: '/whatsnext/messages', label: 'Message Logs', icon: '🗒️' },
+  { to: '/whatsnext/reports', label: 'Reports', icon: '📈' },
 ]
 const adminLinks = [
   { to: '/whatsnext/notifications', label: 'Notifications', icon: '⚡' },

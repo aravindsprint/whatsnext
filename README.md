@@ -18,6 +18,8 @@ Most WhatsApp-for-ERPNext tools stop at "send a templated message when X happens
 - **Schedule** a message or template for later; scheduled items can be cancelled from the chat
 - Pick **Meta or Twilio per message** (when both are enabled), or use the default
 - Incoming text, images, video, audio, documents, stickers, locations, shared contacts, reactions and **template quick-reply button taps**
+- **Reply to a specific message** (quoted on the customer's phone with Meta), and see which message a customer replied to
+- **Share a location** (current position, a pasted Maps link or coordinates) or a **contact card** from ERPNext Contacts
 - **Quick replies** — shared saved answers, inserted with ⚡ or by typing `/shortcut`; `{name}` fills the customer's first name
 - **Read receipts** — customers see blue ticks when an agent opens the chat (Meta)
 - **Away message** — automatic reply outside business hours / on holidays, at most once per cooldown
@@ -31,12 +33,16 @@ Most WhatsApp-for-ERPNext tools stop at "send a templated message when X happens
 **Campaigns**
 - Bulk template sends from CSV or saved recipient lists, paced to respect rate limits
 - **Schedule**, **pause/resume**, **cancel**, **retry failed**; delivered counts follow delivery receipts
+- Adjustable send rate (Settings → Campaign Send Interval)
 - Excel/PDF result export
 
 **Automation**
 - **Whatsnext Notification**: send a template when a document is created, submitted, updated or changed — instant for common doctypes (Sales Invoice, Sales Order, Delivery Note, Quotation, Payment Entry, Purchase Order/Invoice, Lead, Opportunity, Customer, Supplier, Issue, Employee…), every 5 minutes for any other doctype. Manage them in the app under **Notifications**.
 - Attach the document's print as a PDF header
 - **WhatsApp button on ERPNext forms** (Customer, Contact, Lead, Sales Invoice, Sales Order, Quotation, Delivery Note, Payment Entry…) to send a template — optionally with the document PDF — and jump to the chat
+
+**Reports**
+- Agent report: messages sent, chats handled, average/median first-response time, open chats assigned; automated sends excluded
 
 **Compliance & security**
 - **Opt-out handling**: replies like STOP/UNSUBSCRIBE opt the number out of Marketing templates and campaigns (START opts back in), with configurable keywords and confirmations
@@ -73,3 +79,11 @@ yarn dev   # proxies /api to http://localhost:8000 by default
 ```
 
 See `DEPLOY.md` for the production build/deploy checklist.
+
+## Tests
+
+- **Unit tests** (no bench needed; run in CI on every PR):
+  `pip install pytest requests && python -m pytest`
+- **Frontend tests**: `cd frontend && npm test`
+- **Integration tests** on a test site (provider calls are mocked; they change Whatsnext Settings, so never run them on production):
+  `bench --site <test-site> run-tests --app whatsnext`

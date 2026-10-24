@@ -146,7 +146,7 @@ export const useChatStore = defineStore('chat', {
       const list = this.messagesByConversation[id] || []
       if (!list.some((m) => m.name === msg.name)) this.messagesByConversation[id] = [...list, msg]
     },
-    async sendText(to, message, { referenceDoctype, referenceName, scheduledTime } = {}) {
+    async sendText(to, message, { referenceDoctype, referenceName, scheduledTime, replyTo } = {}) {
       const msg = await call(`${API}.send_message`, {
         to,
         message,
@@ -154,11 +154,12 @@ export const useChatStore = defineStore('chat', {
         reference_doctype: referenceDoctype,
         reference_name: referenceName,
         scheduled_time: scheduledTime || undefined,
+        reply_to: replyTo || undefined,
       })
       this._appendSent(msg)
       return msg
     },
-    async sendMedia(to, mediaUrl, mediaType, caption, { referenceDoctype, referenceName } = {}) {
+    async sendMedia(to, mediaUrl, mediaType, caption, { referenceDoctype, referenceName, replyTo } = {}) {
       const msg = await call(`${API}.send_media_message`, {
         to,
         media_url: mediaUrl,
@@ -167,11 +168,30 @@ export const useChatStore = defineStore('chat', {
         provider: this.provider || undefined,
         reference_doctype: referenceDoctype,
         reference_name: referenceName,
+        reply_to: replyTo || undefined,
       })
       this._appendSent(msg)
       return msg
     },
-    async sendTemplate(to, template, parameters, { referenceDoctype, referenceName, headerMediaUrl, scheduledTime } = {}) {
+    async sendLocation(to, { latitude, longitude, name, address, replyTo } = {}) {
+      const msg = await call(`${API}.send_location`, {
+        to, latitude, longitude, name, address,
+        provider: this.provider || undefined,
+        reply_to: replyTo || undefined,
+      })
+      this._appendSent(msg)
+      return msg
+    },
+    async sendContactCard(to, { contact, name, phone, replyTo } = {}) {
+      const msg = await call(`${API}.send_contact_card`, {
+        to, contact, name, phone,
+        provider: this.provider || undefined,
+        reply_to: replyTo || undefined,
+      })
+      this._appendSent(msg)
+      return msg
+    },
+    async sendTemplate(to, template, parameters, { referenceDoctype, referenceName, headerMediaUrl, scheduledTime, replyTo } = {}) {
       const msg = await call(`${API}.send_template_message`, {
         to,
         template,
@@ -181,6 +201,7 @@ export const useChatStore = defineStore('chat', {
         reference_name: referenceName,
         header_media_url: headerMediaUrl,
         scheduled_time: scheduledTime || undefined,
+        reply_to: replyTo || undefined,
       })
       this._appendSent(msg)
       return msg

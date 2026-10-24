@@ -21,9 +21,20 @@ from whatsnext.whatsnext.provider_engine import get_provider, WhatsAppSendError
 # Conservative default: 1 message/second stays well under Meta's lowest
 # messaging tier (250 unique recipients/24h has no per-second cap, but
 # bursting fast against Twilio's default trial rate limits fails fast).
-# Override via WhatsApp Settings in a future iteration if a client needs
-# faster throughput and has a qualified/verified sending number.
+# Adjustable via Whatsnext Settings → Campaign Send Interval for a client
+# with a qualified/verified, higher-tier sending number.
 SEND_INTERVAL_SECONDS = 1.0
+MIN_SEND_INTERVAL_SECONDS = 0.1
+
+
+def _send_interval():
+	"""Configurable in Whatsnext Settings (Campaign Send Interval)."""
+	value = frappe.get_cached_doc("Whatsnext Settings").get("campaign_send_interval")
+	try:
+		value = float(value) if value not in (None, "") else SEND_INTERVAL_SECONDS
+	except (TypeError, ValueError):
+		value = SEND_INTERVAL_SECONDS
+	return max(MIN_SEND_INTERVAL_SECONDS, value)
 
 
 def start_campaign(campaign_name: str):
@@ -75,6 +86,7 @@ def run_campaign(campaign_name: str):
 	template = frappe.get_doc("Whatsnext Message Template", campaign.template)
 	provider_name = campaign.provider or None
 	respect_opt_out = template.category == "Marketing"
+	interval = _send_interval()
 
 	for i, row in enumerate(campaign.recipients):
 		if row.status != "Pending":
@@ -130,6 +142,7 @@ def run_campaign(campaign_name: str):
 				"template_parameters": json.dumps(params),
 				"reference_doctype": "Whatsnext Campaign",
 				"reference_name": campaign.name,
+				"is_automated": 1,
 			})
 			msg.insert(ignore_permissions=True)
 
@@ -150,7 +163,7 @@ def run_campaign(campaign_name: str):
 		campaign.db_set(_counts_only(campaign_name))
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- long-running background job, must persist progress incrementally
 
-		time.sleep(SEND_INTERVAL_SECONDS)
+		time.sleep(interval)
 
 	counts = _counts_only(campaign_name)
 	counts["status"] = "Failed" if counts["sent_count"] == 0 and counts["failed_count"] else "Completed"

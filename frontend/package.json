@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && node scripts/copy-sw.js",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "dexie": "^4.0.4",
@@ -19,6 +20,7 @@
     "@vitejs/plugin-vue": "^5.0.4",
     "vite": "^5.2.0",
     "vite-plugin-pwa": "^0.19.8",
+    "vitest": "^2.1.9",
     "workbox-precaching": "^7.0.0"
   }
 }

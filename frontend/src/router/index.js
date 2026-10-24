@@ -9,6 +9,7 @@ const routes = [
   { path: '/whatsnext/campaigns', name: 'campaigns', component: () => import('@/pages/campaigns/CampaignsPage.vue') },
   { path: '/whatsnext/recipients', name: 'recipients', component: () => import('@/pages/recipients/RecipientsPage.vue') },
   { path: '/whatsnext/messages', name: 'messages', component: () => import('@/pages/message-log/MessageLogPage.vue') },
+  { path: '/whatsnext/reports', name: 'reports', component: () => import('@/pages/reports/ReportsPage.vue') },
   { path: '/whatsnext/notifications', name: 'notifications', component: () => import('@/pages/notifications/NotificationsPage.vue') },
   { path: '/whatsnext/settings', name: 'settings', component: () => import('@/pages/settings/SettingsPage.vue') },
   { path: '/whatsnext/about', name: 'about', component: () => import('@/pages/about/AboutPage.vue') },

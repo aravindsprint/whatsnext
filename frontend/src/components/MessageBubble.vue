@@ -1,14 +1,36 @@
 <script setup>
+import { computed } from 'vue'
 import { parseFrappeDate } from '@/lib/date'
 
 const props = defineProps({ message: Object })
+const emit = defineEmits(['reply', 'jump'])
 
 const statusIcon = { Sent: '✓', Delivered: '✓✓', Read: '✓✓', Failed: '⚠️', Pending: '🕒', Queued: '🕒' }
+
+// Message text split into plain text and links (rendered as <a>, never as
+// HTML), so shared map pins and URLs are tappable without v-html.
+const URL_RE = /(https?:\/\/[^\s<>"']+)/g
+const segments = computed(() => {
+  const text = props.message.message || ''
+  const parts = []
+  let last = 0
+  for (const m of text.matchAll(URL_RE)) {
+    if (m.index > last) parts.push({ text: text.slice(last, m.index) })
+    parts.push({ text: m[0], href: m[0] })
+    last = m.index + m[0].length
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) })
+  return parts
+})
 </script>
 
 <template>
   <div class="wn-bubble-row" :class="message.type === 'Outgoing' ? 'out' : 'in'">
     <div class="wn-bubble">
+      <button v-if="message.reply_preview" type="button" class="wn-bubble-quote" @click="emit('jump', message.reply_preview.name)">
+        <strong>{{ message.reply_preview.author || 'Customer' }}</strong>
+        <span>{{ message.reply_preview.text }}</span>
+      </button>
       <div v-if="message.template" class="wn-bubble-template">
         <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M9 2h6a1 1 0 0 1 1 1v2H8V3a1 1 0 0 1 1-1z" />
@@ -28,10 +50,20 @@ const statusIcon = { Sent: '✓', Delivered: '✓✓', Read: '✓✓', Failed: '
         {{ message.attach.split('/').pop() }}
       </a>
       <div class="wn-bubble-content">
-        <p v-if="message.message">{{ message.message }}</p>
+        <p v-if="message.message">
+          <template v-for="(seg, i) in segments" :key="i">
+            <a v-if="seg.href" :href="seg.href" target="_blank" rel="noopener" class="wn-bubble-link">{{ seg.href.includes('maps.google.com') ? 'Open in Maps' : seg.text }}</a>
+            <template v-else>{{ seg.text }}</template>
+          </template>
+        </p>
+        <p v-if="message.type === 'Outgoing' && message.status === 'Failed' && message.error_message" class="wn-bubble-error">
+          Not delivered: {{ message.error_message }}
+        </p>
         <div class="wn-bubble-meta">
+          <button type="button" class="wn-bubble-reply" title="Reply" @click="emit('reply', message)">↩</button>
+          <span v-if="message.is_automated" title="Sent automatically">⚙</span>
           <span>{{ parseFrappeDate(message.creation).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}</span>
-          <span v-if="message.type === 'Outgoing'" :class="{ read: message.status === 'Read' }">{{ statusIcon[message.status] || '' }}</span>
+          <span v-if="message.type === 'Outgoing'" :class="{ read: message.status === 'Read' }" :title="message.status">{{ statusIcon[message.status] || '' }}</span>
         </div>
       </div>
     </div>
@@ -55,12 +87,21 @@ const statusIcon = { Sent: '✓', Delivered: '✓✓', Read: '✓✓', Failed: '
 .wn-bubble-row.in .wn-bubble { background: white; border-bottom-left-radius: 4px; }
 .wn-bubble-content { padding: 8px 12px; }
 .wn-bubble p { margin: 2px 0; white-space: pre-wrap; word-break: break-word; }
+.wn-bubble-quote { display: block; width: calc(100% - 12px); margin: 6px 6px 0; text-align: left; background: rgba(15, 61, 62, 0.06); border: none; border-left: 3px solid var(--wn-teal); border-radius: 6px; padding: 5px 8px; font-size: 12px; color: var(--wn-text-muted); cursor: pointer; }
+.wn-bubble-quote strong { display: block; color: var(--wn-teal); font-size: 11.5px; }
+.wn-bubble-quote span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .wn-bubble-template { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--wn-teal); font-weight: 600; margin-bottom: 2px; padding: 8px 12px 0; }
 .wn-bubble-image { width: 100%; max-width: 280px; display: block; }
-.wn-bubble-audio { width: 260px; display: block; margin: 8px 12px 0; }
+.wn-bubble-audio { width: 260px; max-width: 100%; display: block; margin: 8px 12px 0; }
 .wn-bubble-video { width: 100%; max-width: 280px; display: block; }
 .wn-bubble-doc { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--wn-blue); padding: 8px 12px; }
 .wn-bubble-doc svg, .wn-bubble-template svg { flex-shrink: 0; }
-.wn-bubble-meta { display: flex; gap: 4px; justify-content: flex-end; font-size: 10px; color: var(--wn-text-muted); margin-top: 2px; }
+.wn-bubble-link { color: var(--wn-blue); word-break: break-all; }
+.wn-bubble-error { font-size: 11.5px; color: var(--wn-red) !important; }
+.wn-bubble-meta { display: flex; gap: 4px; justify-content: flex-end; align-items: center; font-size: 10px; color: var(--wn-text-muted); margin-top: 2px; }
 .wn-bubble-meta .read { color: var(--wn-blue); }
+.wn-bubble-reply { background: none; border: none; padding: 0 4px; color: var(--wn-text-muted); font-size: 12px; cursor: pointer; opacity: 0; transition: opacity 0.15s; }
+.wn-bubble:hover .wn-bubble-reply, .wn-bubble-reply:focus { opacity: 1; }
+@media (hover: none) { .wn-bubble-reply { opacity: 0.7; } }
+@media (max-width: 768px) { .wn-bubble { max-width: 85%; } }
 </style>

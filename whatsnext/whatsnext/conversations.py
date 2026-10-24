@@ -140,7 +140,7 @@ def handle_opt_keywords(message_doc):
 		try:
 			from whatsnext.whatsnext.api import send_message
 
-			send_message(to=message_doc.from_number, message=reply, provider=message_doc.provider)
+			send_message(to=message_doc.from_number, message=reply, provider=message_doc.provider, automated=1)
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), "Whatsnext: opt-out confirmation failed")
 	return True
@@ -224,6 +224,6 @@ def send_away_reply(conversation_id, provider=None):
 	from whatsnext.whatsnext.api import send_message
 
 	try:
-		send_message(to=conversation_id, message=settings.away_message, provider=provider)
+		send_message(to=conversation_id, message=settings.away_message, provider=provider, automated=1)
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), f"Whatsnext: away reply to {conversation_id} failed")
