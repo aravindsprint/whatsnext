@@ -36,7 +36,22 @@ class WhatsnextMessage(Document):
 			# drive chat grouping.
 			self.conversation_id = self.to_number or self.from_number
 
+		# Link the chat to the ERPNext Contact (and through it the Customer)
+		# for every message, whichever path created it.
+		if not self.contact:
+			from whatsnext.whatsnext.contacts import resolve_contact_from_phone
+
+			self.contact = resolve_contact_from_phone(self.conversation_id)
+		if not self.customer and self.contact:
+			from whatsnext.whatsnext.contacts import customer_for_contact
+
+			self.customer = customer_for_contact(self.contact)
+
 	def after_insert(self):
+		from whatsnext.whatsnext.conversations import touch_conversation
+
+		touch_conversation(self)
+
 		# Delivered only to users permitted to see this conversation, never
 		# broadcast site-wide (see publish_message_event).
 		publish_message_event(self, event="whatsnext_new_message")

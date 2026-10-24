@@ -13,7 +13,8 @@ const titles = {
   campaigns: 'Campaigns',
   recipients: 'Recipient Lists',
   messages: 'Message Logs',
-  settings: 'Automate',
+  notifications: 'Notifications',
+  settings: 'Settings',
   about: 'About',
 }
 const title = computed(() => titles[route.name] || 'Whatsnext')

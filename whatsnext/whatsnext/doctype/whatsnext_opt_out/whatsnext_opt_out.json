@@ -1,0 +1,27 @@
+{
+ "doctype": "DocType",
+ "name": "Whatsnext Opt Out",
+ "module": "Whatsnext",
+ "custom": 0,
+ "engine": "InnoDB",
+ "autoname": "field:phone",
+ "title_field": "phone",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "description": "WhatsApp numbers that asked to stop receiving promotional (Marketing) messages.",
+ "field_order": ["phone", "opted_out", "source", "last_keyword", "column_1", "opted_out_on", "opted_in_on", "customer"],
+ "fields": [
+  {"fieldname": "phone", "fieldtype": "Data", "label": "WhatsApp Number", "reqd": 1, "unique": 1, "in_list_view": 1, "description": "Digits only with country code, e.g. 919876543210"},
+  {"fieldname": "opted_out", "fieldtype": "Check", "label": "Opted Out", "default": "1", "in_list_view": 1, "in_standard_filter": 1},
+  {"fieldname": "source", "fieldtype": "Select", "label": "Source", "options": "Keyword\nManual", "default": "Manual", "in_list_view": 1},
+  {"fieldname": "last_keyword", "fieldtype": "Data", "label": "Last Keyword", "read_only": 1},
+  {"fieldname": "column_1", "fieldtype": "Column Break"},
+  {"fieldname": "opted_out_on", "fieldtype": "Datetime", "label": "Opted Out On", "read_only": 1},
+  {"fieldname": "opted_in_on", "fieldtype": "Datetime", "label": "Opted In Again On", "read_only": 1},
+  {"fieldname": "customer", "fieldtype": "Link", "options": "Customer", "label": "Customer", "read_only": 1}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1, "export": 1},
+  {"role": "Whatsnext User", "read": 1, "write": 1, "create": 1, "report": 1}
+ ]
+}

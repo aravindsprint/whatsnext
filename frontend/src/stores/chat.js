@@ -3,19 +3,30 @@ import { call } from '@/api/frappe'
 import { cacheConversations, getCachedConversations, cacheMessages, getCachedMessages } from '@/db'
 import { onNewMessage, onMessageUpdate } from '@/realtime'
 
+const API = 'whatsnext.whatsnext.api'
+const PAGE_SIZE = 50
+
 export const useChatStore = defineStore('chat', {
   state: () => ({
     conversations: [],
     activeConversationId: null,
     messagesByConversation: {},
+    // conversation_id -> true while older pages may still exist
+    hasOlderByConversation: {},
+    infoByConversation: {},
     loadingConversations: false,
     loadingMessages: false,
+    loadingOlder: false,
     search: '',
     filter: 'all',
     stats: { total: 0, unread: 0, sent: 0 },
+    // Provider chosen in the composer ('' = default from Settings)
+    provider: '',
   }),
   getters: {
     activeMessages: (state) => state.messagesByConversation[state.activeConversationId] || [],
+    activeInfo: (state) => state.infoByConversation[state.activeConversationId] || null,
+    activeHasOlder: (state) => !!state.hasOlderByConversation[state.activeConversationId],
   },
   actions: {
     async loadConversations() {
@@ -26,11 +37,11 @@ export const useChatStore = defineStore('chat', {
       const requestId = (this._conversationsRequestId = (this._conversationsRequestId || 0) + 1)
       // Show cached data immediately (first load only — the cache is
       // unfiltered, so showing it mid-search flashed the wrong list).
-      if (!this.conversations.length && !this.search) {
+      if (!this.conversations.length && !this.search && this.filter === 'all') {
         this.conversations = await getCachedConversations()
       }
       try {
-        const res = await call('whatsnext.whatsnext.api.get_conversations', {
+        const res = await call(`${API}.get_conversations`, {
           limit: 100,
           offset: 0,
           search: this.search || undefined,
@@ -44,7 +55,7 @@ export const useChatStore = defineStore('chat', {
       }
     },
     async loadStats() {
-      this.stats = await call('whatsnext.whatsnext.api.get_conversation_stats', {}, 'GET')
+      this.stats = await call(`${API}.get_conversation_stats`, {}, 'GET')
     },
     setSearch(value) {
       this.search = value
@@ -58,61 +69,132 @@ export const useChatStore = defineStore('chat', {
       this.activeConversationId = conversationId
       this.loadingMessages = true
       this.messagesByConversation[conversationId] = await getCachedMessages(conversationId)
+      this.loadInfo(conversationId)
       try {
-        const messages = await call(
-          'whatsnext.whatsnext.api.get_messages',
-          { conversation_id: conversationId, limit: 200 },
-          'GET'
-        )
-        this.messagesByConversation[conversationId] = messages
-        cacheMessages(conversationId, messages)
-        await call('whatsnext.whatsnext.api.mark_as_read', { conversation_id: conversationId })
+        await this.refreshMessages(conversationId)
+        await call(`${API}.mark_as_read`, { conversation_id: conversationId })
       } finally {
         this.loadingMessages = false
       }
     },
-    async sendText(to, message, referenceDoctype, referenceName) {
-      const msg = await call('whatsnext.whatsnext.api.send_message', {
+    // Latest page only; keeps already-loaded older pages in place.
+    async refreshMessages(conversationId) {
+      const latest = await call(`${API}.get_messages`, { conversation_id: conversationId, limit: PAGE_SIZE }, 'GET')
+      const existing = this.messagesByConversation[conversationId] || []
+      const latestNames = new Set(latest.map((m) => m.name))
+      const oldestLatest = latest[0]?.creation
+      const older = oldestLatest ? existing.filter((m) => !latestNames.has(m.name) && m.creation < oldestLatest) : []
+      this.messagesByConversation[conversationId] = [...older, ...latest]
+      if (!(conversationId in this.hasOlderByConversation)) {
+        this.hasOlderByConversation[conversationId] = latest.length === PAGE_SIZE
+      }
+      cacheMessages(conversationId, latest)
+    },
+    async loadOlder() {
+      const id = this.activeConversationId
+      if (!id || this.loadingOlder || !this.hasOlderByConversation[id]) return
+      this.loadingOlder = true
+      try {
+        const existing = this.messagesByConversation[id] || []
+        const older = await call(`${API}.get_messages`, {
+          conversation_id: id, limit: PAGE_SIZE, offset: existing.length,
+        }, 'GET')
+        const names = new Set(existing.map((m) => m.name))
+        this.messagesByConversation[id] = [...older.filter((m) => !names.has(m.name)), ...existing]
+        this.hasOlderByConversation[id] = older.length === PAGE_SIZE
+        cacheMessages(id, older)
+      } finally {
+        this.loadingOlder = false
+      }
+    },
+    async loadInfo(conversationId = this.activeConversationId) {
+      if (!conversationId) return
+      try {
+        this.infoByConversation[conversationId] = await call(
+          `${API}.get_conversation_info`, { conversation_id: conversationId }, 'GET'
+        )
+      } catch {
+        /* non-fatal: header just shows less */
+      }
+    },
+    async assign(user) {
+      const id = this.activeConversationId
+      this.infoByConversation[id] = await call(`${API}.assign_conversation`, { conversation_id: id, user: user || null })
+      this.loadConversations()
+    },
+    async setStatus(status) {
+      const id = this.activeConversationId
+      this.infoByConversation[id] = await call(`${API}.set_conversation_status`, { conversation_id: id, status })
+      this.loadConversations()
+    },
+    async setOptOut(optedOut) {
+      const id = this.activeConversationId
+      this.infoByConversation[id] = await call(`${API}.set_opt_out`, { conversation_id: id, opted_out: optedOut ? 1 : 0 })
+    },
+    async cancelScheduled(name) {
+      await call(`${API}.cancel_scheduled_message`, { name })
+      await this.loadInfo()
+    },
+    _appendSent(msg) {
+      // Scheduled messages aren't in the timeline yet; they show under
+      // "Scheduled" in the conversation info instead.
+      if (msg.scheduled_time) {
+        this.loadInfo()
+        return
+      }
+      const id = msg.conversation_id || this.activeConversationId
+      const list = this.messagesByConversation[id] || []
+      if (!list.some((m) => m.name === msg.name)) this.messagesByConversation[id] = [...list, msg]
+    },
+    async sendText(to, message, { referenceDoctype, referenceName, scheduledTime } = {}) {
+      const msg = await call(`${API}.send_message`, {
         to,
         message,
+        provider: this.provider || undefined,
         reference_doctype: referenceDoctype,
         reference_name: referenceName,
+        scheduled_time: scheduledTime || undefined,
       })
-      const list = this.messagesByConversation[this.activeConversationId] || []
-      this.messagesByConversation[this.activeConversationId] = [...list, msg]
+      this._appendSent(msg)
       return msg
     },
-    async sendMedia(to, mediaUrl, mediaType, caption, referenceDoctype, referenceName) {
-      const msg = await call('whatsnext.whatsnext.api.send_media_message', {
+    async sendMedia(to, mediaUrl, mediaType, caption, { referenceDoctype, referenceName } = {}) {
+      const msg = await call(`${API}.send_media_message`, {
         to,
         media_url: mediaUrl,
         media_type: mediaType,
         caption: caption || '',
+        provider: this.provider || undefined,
         reference_doctype: referenceDoctype,
         reference_name: referenceName,
       })
-      const list = this.messagesByConversation[this.activeConversationId] || []
-      this.messagesByConversation[this.activeConversationId] = [...list, msg]
+      this._appendSent(msg)
       return msg
     },
-    // Called once on app mount. The backend already emits a realtime event
-    // on every new Whatsnext Message (see WhatsnextMessage.after_insert) --
-    // previously nothing listened for it, so incoming messages only ever
-    // showed up after a manual page reload. Wiring this up keeps both the
-    // open conversation and the sidebar list/unread counts live.
+    async sendTemplate(to, template, parameters, { referenceDoctype, referenceName, headerMediaUrl, scheduledTime } = {}) {
+      const msg = await call(`${API}.send_template_message`, {
+        to,
+        template,
+        parameters,
+        provider: this.provider || undefined,
+        reference_doctype: referenceDoctype,
+        reference_name: referenceName,
+        header_media_url: headerMediaUrl,
+        scheduled_time: scheduledTime || undefined,
+      })
+      this._appendSent(msg)
+      return msg
+    },
+    // Called once on app mount. The backend emits a realtime event for every
+    // new message and every delivery receipt (see publish_message_event).
     subscribeRealtime() {
       if (this._unsubscribeRealtime) return
-      this._unsubscribeRealtime = onNewMessage(async (evt) => {
+      const offNew = onNewMessage(async (evt) => {
         if (evt.conversation_id === this.activeConversationId) {
-          const messages = await call(
-            'whatsnext.whatsnext.api.get_messages',
-            { conversation_id: this.activeConversationId, limit: 200 },
-            'GET'
-          )
-          this.messagesByConversation[this.activeConversationId] = messages
-          cacheMessages(this.activeConversationId, messages)
+          await this.refreshMessages(this.activeConversationId)
           if (evt.type === 'Incoming') {
-            await call('whatsnext.whatsnext.api.mark_as_read', { conversation_id: this.activeConversationId })
+            await call(`${API}.mark_as_read`, { conversation_id: this.activeConversationId })
+            this.loadInfo()  // the 24-hour window just reopened
           }
         }
         this.loadConversations()
@@ -124,21 +206,7 @@ export const useChatStore = defineStore('chat', {
         const msg = list?.find((m) => m.name === evt.name)
         if (msg) msg.status = evt.status
       })
-      const offNew = this._unsubscribeRealtime
       this._unsubscribeRealtime = () => { offNew(); offUpdate() }
-    },
-    async sendTemplate(to, template, parameters, referenceDoctype, referenceName, headerMediaUrl) {
-      const msg = await call('whatsnext.whatsnext.api.send_template_message', {
-        to,
-        template,
-        parameters,
-        reference_doctype: referenceDoctype,
-        reference_name: referenceName,
-        header_media_url: headerMediaUrl,
-      })
-      const list = this.messagesByConversation[this.activeConversationId] || []
-      this.messagesByConversation[this.activeConversationId] = [...list, msg]
-      return msg
     },
   },
 })

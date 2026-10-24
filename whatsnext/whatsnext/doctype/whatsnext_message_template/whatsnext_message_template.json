@@ -13,6 +13,7 @@
   "approval_status",
   "column_1",
   "meta_template_id",
+  "rejection_reason",
   "twilio_content_sid",
   "section_content",
   "header_type",
@@ -77,11 +78,18 @@
    "read_only": 1
   },
   {
+   "fieldname": "rejection_reason",
+   "fieldtype": "Small Text",
+   "label": "Rejection Reason",
+   "read_only": 1,
+   "depends_on": "eval:doc.approval_status=='Rejected'"
+  },
+  {
    "fieldname": "twilio_content_sid",
    "fieldtype": "Data",
    "label": "Twilio Content SID",
    "depends_on": "eval:['Twilio','Both'].includes(doc.provider)",
-   "description": "From Twilio Console \u2192 Content Editor, e.g. HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. Required to send this template via Twilio."
+   "description": "From Twilio Console → Content Editor, e.g. HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx. Required to send this template via Twilio."
   },
   {
    "fieldname": "section_content",

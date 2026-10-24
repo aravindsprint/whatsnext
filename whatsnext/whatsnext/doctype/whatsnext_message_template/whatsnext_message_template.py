@@ -17,4 +17,7 @@ class WhatsnextMessageTemplate(Document):
 				except Exception:
 					existing = {}
 			merged = {p: existing.get(p, "") for p in sorted(set(placeholders), key=int)}
+			# A text header's {{1}} example is needed for Meta review too.
+			if self.header_type == "Text" and "{{1}}" in (self.header_text or ""):
+				merged["header_1"] = existing.get("header_1", "")
 			self.variables_sample = json.dumps(merged)

@@ -1,0 +1,28 @@
+{
+ "doctype": "DocType",
+ "name": "Whatsnext Conversation",
+ "module": "Whatsnext",
+ "custom": 0,
+ "engine": "InnoDB",
+ "autoname": "field:conversation_id",
+ "title_field": "profile_name",
+ "sort_field": "last_message_at",
+ "sort_order": "DESC",
+ "description": "One row per WhatsApp chat thread: assignment, open/closed state and the customer-service window. Maintained automatically from Whatsnext Message.",
+ "field_order": ["conversation_id", "profile_name", "status", "assigned_to", "column_1", "customer", "contact", "last_message_at", "last_incoming_at"],
+ "fields": [
+  {"fieldname": "conversation_id", "fieldtype": "Data", "label": "WhatsApp Number", "reqd": 1, "unique": 1, "in_list_view": 1, "read_only": 1},
+  {"fieldname": "profile_name", "fieldtype": "Data", "label": "Profile Name", "in_list_view": 1},
+  {"fieldname": "status", "fieldtype": "Select", "label": "Status", "options": "Open\nClosed", "default": "Open", "in_list_view": 1, "in_standard_filter": 1},
+  {"fieldname": "assigned_to", "fieldtype": "Link", "options": "User", "label": "Assigned To", "in_list_view": 1, "in_standard_filter": 1},
+  {"fieldname": "column_1", "fieldtype": "Column Break"},
+  {"fieldname": "customer", "fieldtype": "Link", "options": "Customer", "label": "Customer", "read_only": 1, "in_standard_filter": 1},
+  {"fieldname": "contact", "fieldtype": "Link", "options": "Contact", "label": "Contact", "read_only": 1},
+  {"fieldname": "last_message_at", "fieldtype": "Datetime", "label": "Last Message At", "read_only": 1},
+  {"fieldname": "last_incoming_at", "fieldtype": "Datetime", "label": "Last Customer Message At", "read_only": 1, "description": "Free-form replies are allowed for 24 hours after this."}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1, "report": 1},
+  {"role": "Whatsnext User", "read": 1, "write": 1, "create": 1, "report": 1}
+ ]
+}

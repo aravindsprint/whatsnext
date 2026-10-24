@@ -52,6 +52,8 @@ scheduler_events = {
 		"*/5 * * * *": [
 			# Pending messages whose scheduled_time has arrived
 			"whatsnext.whatsnext.scheduler.dispatch_scheduled_messages",
+			# Campaigns whose scheduled_time has arrived
+			"whatsnext.whatsnext.scheduler.start_scheduled_campaigns",
 			# Polling counterpart to doc_events for "Scheduled" notifications
 			"whatsnext.whatsnext.scheduler.dispatch_scheduled_doctype_notifications",
 		],
@@ -104,8 +106,10 @@ add_to_apps_screen = [
 # ------------------
 permission_query_conditions = {
 	"Whatsnext Message": "whatsnext.whatsnext.permissions.get_message_permission_query_conditions",
+	"Whatsnext Conversation": "whatsnext.whatsnext.permissions.get_conversation_permission_query_conditions",
 }
 
 has_permission = {
 	"Whatsnext Message": "whatsnext.whatsnext.permissions.has_message_permission",
+	"Whatsnext Conversation": "whatsnext.whatsnext.permissions.has_message_permission",
 }

@@ -31,3 +31,14 @@ button {
 }
 
 a { color: inherit; text-decoration: none; }
+
+/* Shared buttons (pages also style these locally; components rely on these) */
+button.primary { background: var(--wn-teal); color: white; border: none; padding: 10px 16px; border-radius: 10px; font-weight: 600; font-size: 13px; }
+button.primary:disabled { opacity: 0.6; cursor: default; }
+button.ghost { background: white; color: var(--wn-text); border: 1px solid var(--wn-border); padding: 10px 16px; border-radius: 10px; font-size: 13px; }
+button.ghost.small, button.primary.small { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
+button.danger { color: var(--wn-red); }
+.wn-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: var(--wn-bg); color: var(--wn-text-muted); }
+.wn-badge.green { background: var(--wn-teal-light); color: #0f8c72; }
+.wn-badge.amber { background: #fef3c7; color: #92400e; }
+.wn-badge.red { background: #fee2e2; color: #b91c1c; }

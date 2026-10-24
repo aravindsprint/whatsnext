@@ -51,6 +51,32 @@ def _ordered_values(params: dict) -> list:
 	return [params[k] for k in sorted(params, key=key)]
 
 
+def meta_template_name(name: str) -> str:
+	"""Meta template names: lowercase letters, digits and underscores. Local
+	template names may contain spaces/capitals ("Order Update"); the copy
+	submitted to Meta is "order_update", so sends must use the same form."""
+	import re
+
+	slug = re.sub(r"[^a-z0-9_]+", "_", (name or "").lower()).strip("_")
+	return re.sub(r"_+", "_", slug)[:512]
+
+
+def split_template_params(params: dict | None):
+	"""Template parameters arrive as one flat dict: "1", "2"... fill the
+	body, "header_1" fills a text header's {{1}}, and "button_<index>" fills
+	the {{1}} suffix of the URL button at that (0-based) position."""
+	body, header, buttons = {}, None, {}
+	for k, v in (params or {}).items():
+		k = str(k)
+		if k == "header_1":
+			header = v
+		elif k.startswith("button_") and k[7:].isdigit():
+			buttons[int(k[7:])] = v
+		else:
+			body[k] = v
+	return body, header, buttons
+
+
 class BaseProvider:
 	name = "Base"
 
@@ -103,6 +129,7 @@ class MetaProvider(BaseProvider):
 		return self._post(payload)
 
 	def send_template(self, to, template, params, lang="en", header_media_url=None, header_type=None):
+		body_params, header_param, button_params = split_template_params(params)
 		components = []
 		if header_type and header_type not in ("None", "Text") and header_media_url:
 			media_key = header_type.lower()  # image, video, document
@@ -110,18 +137,30 @@ class MetaProvider(BaseProvider):
 				"type": "header",
 				"parameters": [{"type": media_key, media_key: {"link": header_media_url}}],
 			})
-		if params:
+		elif header_param not in (None, ""):
+			components.append({
+				"type": "header",
+				"parameters": [{"type": "text", "text": str(header_param)}],
+			})
+		if body_params:
 			components.append({
 				"type": "body",
-				"parameters": [{"type": "text", "text": str(v)} for v in _ordered_values(params)],
+				"parameters": [{"type": "text", "text": str(v)} for v in _ordered_values(body_params)],
+			})
+		for index in sorted(button_params):
+			components.append({
+				"type": "button",
+				"sub_type": "url",
+				"index": str(index),
+				"parameters": [{"type": "text", "text": str(button_params[index])}],
 			})
 		payload = {
 			"messaging_product": "whatsapp",
 			"to": to,
 			"type": "template",
 			"template": {
-				"name": template,
-				"language": {"code": lang},
+				"name": meta_template_name(template),
+				"language": {"code": lang or "en"},
 				"components": components,
 			},
 		}
@@ -166,6 +205,53 @@ class MetaProvider(BaseProvider):
 			url = (data.get("paging") or {}).get("next")
 			params = None  # the "next" URL already carries its own query string
 		return templates
+
+	def upload_example_media(self, content: bytes, mime_type: str) -> str:
+		"""Resumable Upload API: media-header templates must be submitted
+		with an example file handle. Needs the App ID from Settings."""
+		app_id = self.settings.meta_app_id
+		if not app_id:
+			raise WhatsAppSendError("Set the Meta App ID in Whatsnext Settings to submit templates with a media header.")
+		base = f"https://graph.facebook.com/{self.version}"
+		resp = requests.post(
+			f"{base}/{app_id}/uploads",
+			params={"file_length": len(content), "file_type": mime_type},
+			headers={"Authorization": f"Bearer {self.token}"},
+			timeout=30,
+		)
+		session = _json_or_error(resp)
+		if resp.status_code >= 400 or not session.get("id"):
+			raise WhatsAppSendError((session.get("error") or {}).get("message", str(session)))
+		resp = requests.post(
+			f"{base}/{session['id']}",
+			headers={"Authorization": f"OAuth {self.token}", "file_offset": "0"},
+			data=content,
+			timeout=120,
+		)
+		result = _json_or_error(resp)
+		if resp.status_code >= 400 or not result.get("h"):
+			raise WhatsAppSendError((result.get("error") or {}).get("message", str(result)))
+		return result["h"]
+
+	def create_template(self, payload: dict) -> dict:
+		url = f"https://graph.facebook.com/{self.version}/{self.settings.meta_waba_id}/message_templates"
+		resp = requests.post(url, headers=self._headers(), data=json.dumps(payload), timeout=30)
+		data = _json_or_error(resp)
+		if resp.status_code >= 400:
+			err = data.get("error", {})
+			raise WhatsAppSendError(err.get("error_user_msg") or err.get("message") or str(data))
+		return data
+
+	def edit_template(self, template_id: str, payload: dict) -> dict:
+		resp = requests.post(
+			f"https://graph.facebook.com/{self.version}/{template_id}",
+			headers=self._headers(), data=json.dumps(payload), timeout=30,
+		)
+		data = _json_or_error(resp)
+		if resp.status_code >= 400:
+			err = data.get("error", {})
+			raise WhatsAppSendError(err.get("error_user_msg") or err.get("message") or str(data))
+		return data
 
 	def get_media_metadata(self, media_id: str) -> dict:
 		"""Step 1 of Meta's two-step media download: resolve a media id to a
@@ -231,8 +317,9 @@ class TwilioProvider(BaseProvider):
 			"To": self._wa(to),
 			"ContentSid": doc.twilio_content_sid,
 		}
-		if params:
-			data["ContentVariables"] = json.dumps(params)
+		body_params, _, _ = split_template_params(params)
+		if body_params:
+			data["ContentVariables"] = json.dumps({str(k): str(v) for k, v in body_params.items()})
 		return self._post(data)
 
 	def send_media(self, to, media_url, media_type, caption=""):

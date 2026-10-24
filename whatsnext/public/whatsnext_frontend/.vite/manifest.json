@@ -1,6 +1,6 @@
 {
-  "_csv-BmyyNt_P.js": {
-    "file": "assets/csv-BmyyNt_P.js",
+  "_csv-C1xUliOf.js": {
+    "file": "assets/csv-C1xUliOf.js",
     "name": "csv",
     "imports": [
       "index.html"
@@ -10,8 +10,12 @@
     "file": "assets/date-DWWLIY5R.js",
     "name": "date"
   },
+  "_templateVars-C5DWzWa1.js": {
+    "file": "assets/templateVars-C5DWzWa1.js",
+    "name": "templateVars"
+  },
   "index.html": {
-    "file": "assets/index-tDOvuCmG.js",
+    "file": "assets/index-nCViAzyI.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -23,15 +27,16 @@
       "src/pages/campaigns/CampaignsPage.vue",
       "src/pages/recipients/RecipientsPage.vue",
       "src/pages/message-log/MessageLogPage.vue",
+      "src/pages/notifications/NotificationsPage.vue",
       "src/pages/settings/SettingsPage.vue",
       "src/pages/about/AboutPage.vue"
     ],
     "css": [
-      "assets/index-CVQCaNkP.css"
+      "assets/index-BJN3uru-.css"
     ]
   },
   "src/pages/about/AboutPage.vue": {
-    "file": "assets/AboutPage-BwMRSZqu.js",
+    "file": "assets/AboutPage-DF5p6qgJ.js",
     "name": "AboutPage",
     "src": "src/pages/about/AboutPage.vue",
     "isDynamicEntry": true,
@@ -43,20 +48,22 @@
     ]
   },
   "src/pages/campaigns/CampaignsPage.vue": {
-    "file": "assets/CampaignsPage-DXhZ-x6a.js",
+    "file": "assets/CampaignsPage-zCw7XclV.js",
     "name": "CampaignsPage",
     "src": "src/pages/campaigns/CampaignsPage.vue",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_csv-BmyyNt_P.js"
+      "_csv-C1xUliOf.js",
+      "_templateVars-C5DWzWa1.js",
+      "_date-DWWLIY5R.js"
     ],
     "css": [
-      "assets/CampaignsPage-LYDWKDGM.css"
+      "assets/CampaignsPage-BCHKuB0W.css"
     ]
   },
   "src/pages/dashboard/DashboardPage.vue": {
-    "file": "assets/DashboardPage-jQfoWpzH.js",
+    "file": "assets/DashboardPage-CF_HaW1y.js",
     "name": "DashboardPage",
     "src": "src/pages/dashboard/DashboardPage.vue",
     "isDynamicEntry": true,
@@ -65,24 +72,25 @@
       "_date-DWWLIY5R.js"
     ],
     "css": [
-      "assets/DashboardPage-BGRVnKkf.css"
+      "assets/DashboardPage-CBK8HmRR.css"
     ]
   },
   "src/pages/home/HomePage.vue": {
-    "file": "assets/HomePage-DDNhK9yO.js",
+    "file": "assets/HomePage-C7Oeyb3M.js",
     "name": "HomePage",
     "src": "src/pages/home/HomePage.vue",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_date-DWWLIY5R.js"
+      "_date-DWWLIY5R.js",
+      "_templateVars-C5DWzWa1.js"
     ],
     "css": [
-      "assets/HomePage-D64RBaFo.css"
+      "assets/HomePage-CLxcp40S.css"
     ]
   },
   "src/pages/login/LoginPage.vue": {
-    "file": "assets/LoginPage-DSOSb749.js",
+    "file": "assets/LoginPage-Bm4tMznP.js",
     "name": "LoginPage",
     "src": "src/pages/login/LoginPage.vue",
     "isDynamicEntry": true,
@@ -94,7 +102,7 @@
     ]
   },
   "src/pages/message-log/MessageLogPage.vue": {
-    "file": "assets/MessageLogPage-Cxd4xuts.js",
+    "file": "assets/MessageLogPage-CMhx4TiM.js",
     "name": "MessageLogPage",
     "src": "src/pages/message-log/MessageLogPage.vue",
     "isDynamicEntry": true,
@@ -106,21 +114,34 @@
       "assets/MessageLogPage-WJF_J8Ic.css"
     ]
   },
+  "src/pages/notifications/NotificationsPage.vue": {
+    "file": "assets/NotificationsPage-DTG0uFMn.js",
+    "name": "NotificationsPage",
+    "src": "src/pages/notifications/NotificationsPage.vue",
+    "isDynamicEntry": true,
+    "imports": [
+      "index.html",
+      "_date-DWWLIY5R.js"
+    ],
+    "css": [
+      "assets/NotificationsPage-DHNhTJFs.css"
+    ]
+  },
   "src/pages/recipients/RecipientsPage.vue": {
-    "file": "assets/RecipientsPage-DPrK3pEF.js",
+    "file": "assets/RecipientsPage-DHt3rlBq.js",
     "name": "RecipientsPage",
     "src": "src/pages/recipients/RecipientsPage.vue",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_csv-BmyyNt_P.js"
+      "_csv-C1xUliOf.js"
     ],
     "css": [
       "assets/RecipientsPage-MRJ-xd5u.css"
     ]
   },
   "src/pages/settings/SettingsPage.vue": {
-    "file": "assets/SettingsPage-BoLYWJtp.js",
+    "file": "assets/SettingsPage-shwhM34m.js",
     "name": "SettingsPage",
     "src": "src/pages/settings/SettingsPage.vue",
     "isDynamicEntry": true,
@@ -128,19 +149,20 @@
       "index.html"
     ],
     "css": [
-      "assets/SettingsPage-DZi-L0po.css"
+      "assets/SettingsPage-BrQMeZ6i.css"
     ]
   },
   "src/pages/templates/TemplatesPage.vue": {
-    "file": "assets/TemplatesPage-B84rfrJf.js",
+    "file": "assets/TemplatesPage-DT5ngaze.js",
     "name": "TemplatesPage",
     "src": "src/pages/templates/TemplatesPage.vue",
     "isDynamicEntry": true,
     "imports": [
-      "index.html"
+      "index.html",
+      "_templateVars-C5DWzWa1.js"
     ],
     "css": [
-      "assets/TemplatesPage-lP8QnxlK.css"
+      "assets/TemplatesPage-C2ys5Opy.css"
     ]
   }
 }

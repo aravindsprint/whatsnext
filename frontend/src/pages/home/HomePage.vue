@@ -2,14 +2,19 @@
 import { onMounted, ref, computed, nextTick, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
+import { useAuthStore } from '@/stores/auth'
 import { call } from '@/api/frappe'
 import { parseFrappeDate } from '@/lib/date'
+import { toFrappeDatetime } from '@/lib/templateVars'
 import ConversationList from '@/components/ConversationList.vue'
 import MessageBubble from '@/components/MessageBubble.vue'
+import TemplateSendForm from '@/components/TemplateSendForm.vue'
 
 const chat = useChatStore()
+const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
+
 const draft = ref('')
 const messagesEl = ref(null)
 const showContactInfo = ref(false)
@@ -17,6 +22,37 @@ const showMediaPanel = ref(false)
 const mediaTab = ref('media')
 const mediaData = ref({ media: [], docs: [], audio: [] })
 const mediaLoading = ref(false)
+const composerError = ref(null)
+
+const FILTER_TABS = [
+  ['all', 'All'], ['unread', 'Unread'], ['mine', 'Mine'],
+  ['incoming', 'In'], ['outgoing', 'Out'], ['closed', 'Closed'],
+]
+
+// --- Active conversation ---------------------------------------------
+const activeConversation = computed(() =>
+  chat.conversations.find((c) => (c.conversation_id || c.name) === chat.activeConversationId)
+)
+// conversation_id is always the counterpart's number (see
+// Whatsnext Message.before_insert and the webhook handlers).
+const activeConversationNumber = computed(() => chat.activeConversationId)
+const info = computed(() => chat.activeInfo)
+const displayName = computed(() =>
+  activeConversation.value?.profile_name || info.value?.profile_name || activeConversationNumber.value
+)
+
+// Free-form messages are only allowed for 24h after the customer's last
+// message; outside it WhatsApp accepts approved templates only.
+const windowOpen = computed(() => {
+  if (info.value) return !!info.value.window_open
+  return !!activeConversation.value?.window_open
+})
+const windowLabel = computed(() => {
+  const exp = info.value?.window_expires_at
+  if (!windowOpen.value || !exp) return null
+  const hours = Math.max(0, Math.round((parseFrappeDate(exp) - new Date()) / 3600000))
+  return hours >= 1 ? `${hours}h left to reply` : 'under 1h left to reply'
+})
 
 function dateSeparatorLabel(dateStr) {
   const d = parseFrappeDate(dateStr)
@@ -49,15 +85,33 @@ async function openMediaPanel() {
   showMediaPanel.value = true
   showContactInfo.value = false
   mediaTab.value = 'media'
-  if (!activeConversation.value) return
+  if (!activeConversationNumber.value) return
   mediaLoading.value = true
   try {
-    const convId = activeConversation.value.conversation_id || activeConversation.value.name
-    mediaData.value = await call('whatsnext.whatsnext.api.get_conversation_media', { conversation_id: convId }, 'GET')
+    mediaData.value = await call('whatsnext.whatsnext.api.get_conversation_media', { conversation_id: activeConversationNumber.value }, 'GET')
   } finally {
     mediaLoading.value = false
   }
 }
+
+// --- Assignment / status / opt-out -------------------------------------
+const actionBusy = ref(false)
+async function runAction(fn) {
+  actionBusy.value = true
+  composerError.value = null
+  try {
+    await fn()
+  } catch (e) {
+    composerError.value = e.message
+  } finally {
+    actionBusy.value = false
+  }
+}
+function onAssign(e) { runAction(() => chat.assign(e.target.value)) }
+function assignToMe() { runAction(() => chat.assign(auth.user)) }
+function toggleClosed() { runAction(() => chat.setStatus(info.value?.status === 'Closed' ? 'Open' : 'Closed')) }
+function toggleOptOut() { runAction(() => chat.setOptOut(!info.value?.opted_out)) }
+function cancelScheduled(name) { runAction(() => chat.cancelScheduled(name)) }
 
 // --- Emoji picker -----------------------------------------------------
 const showEmojiPicker = ref(false)
@@ -67,10 +121,13 @@ function insertEmoji(e) {
   showEmojiPicker.value = false
 }
 
+// --- Schedule (free text) ----------------------------------------------
+const showSchedule = ref(false)
+const scheduleAt = ref('')
+
 // --- File attach --------------------------------------------------------
 const fileInputEl = ref(null)
 const attachSending = ref(false)
-const attachError = ref(null)
 
 function triggerFilePicker() {
   fileInputEl.value?.click()
@@ -86,10 +143,10 @@ function mediaTypeFromMime(mime) {
 async function onFileSelected(e) {
   const file = e.target.files?.[0]
   e.target.value = ''
-  if (!file || !activeConversation.value) return
+  if (!file || !activeConversationNumber.value) return
 
   attachSending.value = true
-  attachError.value = null
+  composerError.value = null
   try {
     const formData = new FormData()
     formData.append('file', file)
@@ -103,13 +160,10 @@ async function onFileSelected(e) {
     if (!res.ok) throw new Error('Upload failed')
     const data = await res.json()
     const fileUrl = window.location.origin + data.message.file_url
-
-    const to = activeConversationNumber.value
-    const mediaType = mediaTypeFromMime(file.type)
-    await chat.sendMedia(to, fileUrl, mediaType, '')
+    await chat.sendMedia(activeConversationNumber.value, fileUrl, mediaTypeFromMime(file.type), '')
     scrollToBottom()
   } catch (err) {
-    attachError.value = err.message
+    composerError.value = err.message
   } finally {
     attachSending.value = false
   }
@@ -119,47 +173,29 @@ async function onFileSelected(e) {
 const showTplPicker = ref(false)
 const tplList = ref([])
 const tplSelected = ref(null)
-const tplVariables = ref([])
-const tplHeaderMediaUrl = ref('')
 const tplSending = ref(false)
 const tplError = ref(null)
-
-const tplNeedsHeaderMedia = computed(() =>
-  tplSelected.value && !['None', 'Text'].includes(tplSelected.value.header_type)
-)
 
 async function openTplPicker() {
   showTplPicker.value = true
   tplSelected.value = null
   tplError.value = null
   try {
-    tplList.value = await call('whatsnext.whatsnext.api.get_templates', { approved_only: true }, 'GET')
+    tplList.value = await call('whatsnext.whatsnext.api.get_templates', { approved_only: 1 }, 'GET')
   } catch (e) {
     tplError.value = e.message
   }
 }
 
-function pickTplForSend(tpl) {
-  tplSelected.value = tpl
-  const matches = [...(tpl.body || '').matchAll(/\{\{(\d+)\}\}/g)]
-  const count = matches.length ? Math.max(...matches.map((m) => parseInt(m[1], 10))) : 0
-  tplVariables.value = Array.from({ length: count }, () => '')
-  tplHeaderMediaUrl.value = tpl.header_example_url || ''
-}
-
-async function sendTplToActiveConversation() {
-  if (!tplSelected.value || !activeConversation.value) return
-  if (tplNeedsHeaderMedia.value && !tplHeaderMediaUrl.value.trim()) {
-    tplError.value = `This template has a ${tplSelected.value.header_type} header — a media URL is required.`
-    return
-  }
+async function sendTplToActiveConversation(payload) {
+  if (!tplSelected.value || !activeConversationNumber.value) return
   tplSending.value = true
   tplError.value = null
   try {
-    const params = {}
-    tplVariables.value.forEach((v, i) => { params[i + 1] = v })
-    const to = activeConversationNumber.value
-    await chat.sendTemplate(to, tplSelected.value.name, params, null, null, tplHeaderMediaUrl.value || undefined)
+    await chat.sendTemplate(activeConversationNumber.value, tplSelected.value.name, payload.parameters, {
+      headerMediaUrl: payload.headerMediaUrl,
+      scheduledTime: payload.scheduledTime,
+    })
     showTplPicker.value = false
     scrollToBottom()
   } catch (e) {
@@ -169,6 +205,7 @@ async function sendTplToActiveConversation() {
   }
 }
 
+// --- Lifecycle --------------------------------------------------------
 onMounted(async () => {
   chat.subscribeRealtime()
   chat.loadStats()
@@ -177,8 +214,7 @@ onMounted(async () => {
 })
 
 // Push notifications link to /whatsnext?conversation=<number> (see
-// push_engine.notify_new_message); nothing read that parameter, so tapping
-// a notification just landed on the empty chat screen.
+// push_engine.notify_new_message).
 function openConversationFromQuery() {
   const id = route.query.conversation
   if (!id || typeof id !== 'string') return
@@ -194,28 +230,17 @@ function onSearchInput(e) {
   searchDebounceTimer = setTimeout(() => chat.setSearch(value), 300)
 }
 
-function setFilterTab(tab) {
-  chat.setFilter(tab)
-}
-
-const activeConversation = computed(() =>
-  chat.conversations.find((c) => (c.conversation_id || c.name) === chat.activeConversationId)
-)
-
-// conversation_id is always the counterpart's number (set correctly in the
-// backend for both directions — see Whatsnext Message.before_insert and the
-// webhook handlers). activeConversation.to_number/from_number instead reflect
-// whichever message happened to be the *latest* in the thread, so picking
-// to_number first is wrong whenever that latest message is Incoming (its
-// to_number is our own business number, not the customer's) -- that mix-up
-// is what was causing outgoing sends/headers to target the wrong number.
-const activeConversationNumber = computed(() =>
-  activeConversation.value ? (activeConversation.value.conversation_id || activeConversation.value.name) : null
-)
-
 async function selectConversation(id) {
+  composerError.value = null
+  showSchedule.value = false
   await chat.openConversation(id)
   scrollToBottom()
+}
+
+function closeConversation() {
+  chat.activeConversationId = null
+  showContactInfo.value = false
+  showMediaPanel.value = false
 }
 
 function scrollToBottom() {
@@ -224,19 +249,51 @@ function scrollToBottom() {
   })
 }
 
-watch(() => chat.activeMessages.length, scrollToBottom)
+// Only jump to the bottom for new messages, not when older ones are prepended.
+let lastLastName = null
+watch(() => chat.activeMessages, (list) => {
+  const last = list[list.length - 1]?.name || null
+  if (last !== lastLastName) scrollToBottom()
+  lastLastName = last
+})
+
+async function loadOlder() {
+  const el = messagesEl.value
+  const before = el ? el.scrollHeight : 0
+  await chat.loadOlder()
+  nextTick(() => {
+    if (el) el.scrollTop = el.scrollHeight - before
+  })
+}
+
+function onMessagesScroll(e) {
+  if (e.target.scrollTop < 40 && chat.activeHasOlder && !chat.loadingOlder) loadOlder()
+}
 
 async function send() {
   const text = draft.value.trim()
-  if (!text || !activeConversation.value) return
+  if (!text || !activeConversationNumber.value) return
+  const scheduledTime = showSchedule.value && scheduleAt.value ? toFrappeDatetime(scheduleAt.value) : undefined
+  if (showSchedule.value && !scheduledTime) {
+    composerError.value = 'Pick a date and time to schedule, or close the schedule option.'
+    return
+  }
   draft.value = ''
-  const to = activeConversationNumber.value
+  composerError.value = null
   try {
-    await chat.sendText(to, text, activeConversation.value.reference_doctype, activeConversation.value.reference_name)
+    await chat.sendText(activeConversationNumber.value, text, {
+      referenceDoctype: activeConversation.value?.reference_doctype,
+      referenceName: activeConversation.value?.reference_name,
+      scheduledTime,
+    })
+    if (scheduledTime) {
+      showSchedule.value = false
+      scheduleAt.value = ''
+    }
   } catch (e) {
     // Don't silently lose what the user typed when the request fails.
     if (!draft.value) draft.value = text
-    attachError.value = e.message
+    composerError.value = e.message
   }
 }
 
@@ -249,15 +306,15 @@ const ncLoadingContacts = ref(false)
 const ncSelectedContact = ref(null)
 const ncTemplates = ref([])
 const ncSelectedTemplate = ref(null)
-const ncVariables = ref([])
-const ncHeaderMediaUrl = ref('')
 const ncSending = ref(false)
 const ncError = ref(null)
+const ncManualNumber = ref('')
 
 function openNewChat() {
   showNewChat.value = true
   ncStep.value = 'contact'
   ncSearch.value = ''
+  ncManualNumber.value = ''
   ncSelectedContact.value = null
   ncSelectedTemplate.value = null
   ncError.value = null
@@ -275,53 +332,45 @@ async function searchContacts() {
   }
 }
 
-let searchDebounce
+let contactSearchDebounce
 watch(ncSearch, () => {
-  clearTimeout(searchDebounce)
-  searchDebounce = setTimeout(searchContacts, 300)
+  clearTimeout(contactSearchDebounce)
+  contactSearchDebounce = setTimeout(searchContacts, 300)
 })
 
 async function pickContact(contact) {
   ncSelectedContact.value = contact
   ncError.value = null
   try {
-    ncTemplates.value = await call('whatsnext.whatsnext.api.get_templates', { approved_only: true }, 'GET')
+    ncTemplates.value = await call('whatsnext.whatsnext.api.get_templates', { approved_only: 1 }, 'GET')
   } catch (e) {
     ncError.value = e.message
   }
   ncStep.value = 'template'
 }
 
-const ncNeedsHeaderMedia = computed(() =>
-  ncSelectedTemplate.value && !['None', 'Text'].includes(ncSelectedTemplate.value.header_type)
-)
-
-function pickTemplate(tpl) {
-  ncSelectedTemplate.value = tpl
-  const matches = [...(tpl.body || '').matchAll(/\{\{(\d+)\}\}/g)]
-  const count = matches.length ? Math.max(...matches.map((m) => parseInt(m[1], 10))) : 0
-  ncVariables.value = Array.from({ length: count }, () => '')
-  ncHeaderMediaUrl.value = tpl.header_example_url || ''
-}
-
-async function sendNewChat() {
-  if (!ncSelectedContact.value || !ncSelectedTemplate.value) return
-  if (ncNeedsHeaderMedia.value && !ncHeaderMediaUrl.value.trim()) {
-    ncError.value = `This template has a ${ncSelectedTemplate.value.header_type} header — a media URL is required.`
+function pickManualNumber() {
+  const digits = ncManualNumber.value.replace(/[^\d+]/g, '')
+  if (digits.replace('+', '').length < 7) {
+    ncError.value = 'Enter a valid WhatsApp number with country code.'
     return
   }
+  pickContact({ full_name: '', phone: digits, customer: '' })
+}
+
+async function sendNewChat(payload) {
+  if (!ncSelectedContact.value || !ncSelectedTemplate.value) return
   ncSending.value = true
   ncError.value = null
   try {
-    const params = {}
-    ncVariables.value.forEach((v, i) => { params[i + 1] = v })
     const phone = ncSelectedContact.value.phone
-    const msg = await chat.sendTemplate(phone, ncSelectedTemplate.value.name, params, null, null, ncHeaderMediaUrl.value || undefined)
+    const msg = await chat.sendTemplate(phone, ncSelectedTemplate.value.name, payload.parameters, {
+      headerMediaUrl: payload.headerMediaUrl,
+      scheduledTime: payload.scheduledTime,
+    })
     showNewChat.value = false
     // The backend normalizes the number ("+91 98940 88422" -> "919894088422")
-    // and groups the thread under that, so open the conversation id it
-    // actually used. Opening the raw contact phone matched no conversation
-    // and left the chat pane blank after every new chat.
+    // and groups the thread under that, so open the id it actually used.
     const conversationId = msg?.conversation_id || msg?.to_number || phone
     await chat.loadConversations()
     await selectConversation(conversationId)
@@ -334,7 +383,7 @@ async function sendNewChat() {
 </script>
 
 <template>
-  <div class="wn-chat-layout">
+  <div class="wn-chat-layout" :class="{ 'has-active': !!chat.activeConversationId }">
     <div class="wn-conv-pane">
       <div class="wn-conv-header">
         <button class="wn-new-chat-btn" @click="openNewChat">+ New Chat</button>
@@ -345,9 +394,9 @@ async function sendNewChat() {
           <span class="wn-stat">Sent <strong>{{ chat.stats.sent }}</strong></span>
         </div>
         <div class="wn-filter-tabs">
-          <button v-for="tab in ['all','unread','incoming','outgoing']" :key="tab"
-                  :class="{ active: chat.filter === tab }" @click="setFilterTab(tab)">
-            {{ tab.charAt(0).toUpperCase() + tab.slice(1) }}
+          <button v-for="[tab, label] in FILTER_TABS" :key="tab"
+                  :class="{ active: chat.filter === tab }" @click="chat.setFilter(tab)">
+            {{ label }}
           </button>
         </div>
       </div>
@@ -359,13 +408,25 @@ async function sendNewChat() {
     </div>
 
     <div class="wn-chat-pane">
-      <template v-if="activeConversation">
+      <template v-if="chat.activeConversationId">
         <div class="wn-chat-header">
-          <div class="wn-avatar">{{ (activeConversation.profile_name || '?').charAt(0).toUpperCase() }}</div>
+          <button class="wn-info-btn wn-back-btn" @click="closeConversation" title="Back to chats">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6" /></svg>
+          </button>
+          <div class="wn-avatar">{{ (displayName || '?').charAt(0).toUpperCase() }}</div>
           <div class="wn-chat-header-name">
-            <div class="wn-chat-name">{{ activeConversation.profile_name || activeConversationNumber }}</div>
-            <div class="wn-chat-phone">{{ activeConversationNumber }}</div>
+            <div class="wn-chat-name">{{ displayName }}</div>
+            <div class="wn-chat-phone">
+              {{ activeConversationNumber }}
+              <span v-if="info?.status === 'Closed'" class="wn-badge">Closed</span>
+              <span v-if="info?.assigned_to" class="wn-badge green">{{ info.assigned_to === auth.user ? 'You' : (info.assigned_to_name || info.assigned_to) }}</span>
+              <span v-if="info?.opted_out" class="wn-badge red">Opted out</span>
+            </div>
           </div>
+          <button v-if="!info?.assigned_to" class="ghost small wn-hide-mobile" :disabled="actionBusy" @click="assignToMe">Assign to me</button>
+          <button class="ghost small" :disabled="actionBusy" @click="toggleClosed">
+            {{ info?.status === 'Closed' ? 'Reopen' : 'Close' }}
+          </button>
           <button class="wn-info-btn" @click="showMediaPanel = false; showContactInfo = !showContactInfo" title="Contact info">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="10" />
@@ -380,7 +441,12 @@ async function sendNewChat() {
           </button>
         </div>
 
-        <div class="wn-messages" ref="messagesEl">
+        <div class="wn-messages" ref="messagesEl" @scroll="onMessagesScroll">
+          <div v-if="chat.activeHasOlder" class="wn-older-row">
+            <button class="ghost small" :disabled="chat.loadingOlder" @click="loadOlder">
+              {{ chat.loadingOlder ? 'Loading…' : 'Load earlier messages' }}
+            </button>
+          </div>
           <template v-for="item in timelineItems" :key="item.key">
             <div v-if="item.type === 'separator'" class="wn-date-pill-row">
               <span class="wn-date-pill">{{ item.label }}</span>
@@ -390,7 +456,23 @@ async function sendNewChat() {
           <div v-if="chat.loadingMessages" class="wn-loading">Loading…</div>
         </div>
 
-        <p v-if="attachError" class="wn-error wn-composer-error">{{ attachError }}</p>
+        <div v-if="info?.scheduled?.length" class="wn-scheduled-strip">
+          🕒 {{ info.scheduled.length }} scheduled —
+          <button class="wn-link" @click="showMediaPanel = false; showContactInfo = true">view</button>
+        </div>
+
+        <div v-if="!windowOpen" class="wn-window-banner">
+          The 24-hour reply window is closed — WhatsApp only allows an approved template until the customer writes back.
+          <button class="primary small" @click="openTplPicker">Send a template</button>
+        </div>
+        <div v-else-if="windowLabel" class="wn-window-hint">{{ windowLabel }}</div>
+
+        <p v-if="composerError" class="wn-error wn-composer-error">{{ composerError }}</p>
+        <div v-if="showSchedule && windowOpen" class="wn-schedule-row">
+          <label>Send at</label>
+          <input v-model="scheduleAt" type="datetime-local" />
+          <button type="button" class="ghost small" @click="showSchedule = false; scheduleAt = ''">Cancel</button>
+        </div>
         <form class="wn-composer" @submit.prevent="send">
           <button type="button" class="wn-tpl-btn" @click="openTplPicker" title="Send a template">
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -400,27 +482,39 @@ async function sendNewChat() {
               <line x1="9" y1="15" x2="15" y2="15" />
             </svg>
           </button>
-          <div class="wn-emoji-wrap">
-            <button type="button" class="wn-tpl-btn" @click="showEmojiPicker = !showEmojiPicker" title="Emoji">
+          <template v-if="windowOpen">
+            <div class="wn-emoji-wrap wn-hide-mobile">
+              <button type="button" class="wn-tpl-btn" @click="showEmojiPicker = !showEmojiPicker" title="Emoji">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                  <line x1="9" y1="9" x2="9.01" y2="9" />
+                  <line x1="15" y1="9" x2="15.01" y2="9" />
+                </svg>
+              </button>
+              <div v-if="showEmojiPicker" class="wn-emoji-popup">
+                <button v-for="e in commonEmojis" :key="e" type="button" @click="insertEmoji(e)">{{ e }}</button>
+              </div>
+            </div>
+            <button type="button" class="wn-tpl-btn" @click="triggerFilePicker" :disabled="attachSending" title="Attach file">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-                <line x1="9" y1="9" x2="9.01" y2="9" />
-                <line x1="15" y1="9" x2="15.01" y2="9" />
+                <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
               </svg>
             </button>
-            <div v-if="showEmojiPicker" class="wn-emoji-popup">
-              <button v-for="e in commonEmojis" :key="e" type="button" @click="insertEmoji(e)">{{ e }}</button>
-            </div>
-          </div>
-          <button type="button" class="wn-tpl-btn" @click="triggerFilePicker" :disabled="attachSending" title="Attach file">
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-            </svg>
-          </button>
+            <button type="button" class="wn-tpl-btn" :class="{ active: showSchedule }" @click="showSchedule = !showSchedule" title="Schedule">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" />
+              </svg>
+            </button>
+          </template>
           <input ref="fileInputEl" type="file" class="wn-hidden-file-input" @change="onFileSelected" />
-          <input v-model="draft" type="text" placeholder="Type a message" />
-          <button type="submit">Send</button>
+          <select v-if="auth.providers.length > 1" v-model="chat.provider" class="wn-provider-select" title="Send via">
+            <option value="">Default ({{ auth.defaultProvider }})</option>
+            <option v-for="p in auth.providers" :key="p" :value="p">{{ p }}</option>
+          </select>
+          <input v-model="draft" type="text" :disabled="!windowOpen"
+                 :placeholder="windowOpen ? 'Type a message' : 'Templates only — the customer hasn’t written in 24 hours'" />
+          <button type="submit" :disabled="!windowOpen">{{ showSchedule ? 'Schedule' : 'Send' }}</button>
         </form>
       </template>
 
@@ -429,32 +523,60 @@ async function sendNewChat() {
       </div>
     </div>
 
-    <div v-if="showContactInfo && activeConversation" class="wn-info-panel">
+    <div v-if="showContactInfo && chat.activeConversationId" class="wn-info-panel">
       <div class="wn-info-header">
         <span>Contact Info</span>
         <button @click="showContactInfo = false">✕</button>
       </div>
-      <div class="wn-info-avatar">{{ (activeConversation.profile_name || '?').charAt(0).toUpperCase() }}</div>
-      <div class="wn-info-name">{{ activeConversation.profile_name || activeConversationNumber }}</div>
+      <div class="wn-info-avatar">{{ (displayName || '?').charAt(0).toUpperCase() }}</div>
+      <div class="wn-info-name">{{ displayName }}</div>
       <div class="wn-info-row">
         <span class="wn-info-label">Phone</span>
         <span>{{ activeConversationNumber }}</span>
       </div>
       <div class="wn-info-row">
         <span class="wn-info-label">Customer</span>
-        <span>{{ activeConversation.customer || '—' }}</span>
+        <a v-if="info?.customer" :href="`/app/customer/${encodeURIComponent(info.customer)}`" target="_blank">{{ info.customer }}</a>
+        <span v-else>—</span>
       </div>
       <div class="wn-info-row">
-        <span class="wn-info-label">Last Message Type</span>
-        <span>{{ activeConversation.type }}</span>
+        <span class="wn-info-label">Contact</span>
+        <a v-if="info?.contact" :href="`/app/contact/${encodeURIComponent(info.contact)}`" target="_blank">{{ info.contact }}</a>
+        <span v-else>—</span>
       </div>
       <div class="wn-info-row">
-        <span class="wn-info-label">Last Message</span>
-        <span>{{ parseFrappeDate(activeConversation.modified).toLocaleString() }}</span>
+        <span class="wn-info-label">Assigned to</span>
+        <select :value="info?.assigned_to || ''" :disabled="actionBusy" @change="onAssign">
+          <option value="">Unassigned</option>
+          <option v-for="a in auth.agents" :key="a.name" :value="a.name">{{ a.full_name || a.name }}</option>
+        </select>
+      </div>
+      <div class="wn-info-row">
+        <span class="wn-info-label">Reply window</span>
+        <span>{{ windowOpen ? (windowLabel || 'Open') : 'Closed — templates only' }}</span>
+      </div>
+      <div class="wn-info-row">
+        <span class="wn-info-label">Promotional messages</span>
+        <span>
+          {{ info?.opted_out ? 'Opted out' : 'Subscribed' }}
+          <button class="ghost small" :disabled="actionBusy" @click="toggleOptOut">
+            {{ info?.opted_out ? 'Opt back in' : 'Mark opted out' }}
+          </button>
+        </span>
+      </div>
+      <div v-if="info?.scheduled?.length" class="wn-info-row">
+        <span class="wn-info-label">Scheduled</span>
+        <div v-for="s in info.scheduled" :key="s.name" class="wn-scheduled-item">
+          <div>
+            <strong>{{ parseFrappeDate(s.scheduled_time).toLocaleString() }}</strong>
+            <div class="wn-muted-small">{{ s.template ? '📋 ' + s.template : (s.message || '').slice(0, 60) }}</div>
+          </div>
+          <button class="ghost small danger" :disabled="actionBusy" @click="cancelScheduled(s.name)">Cancel</button>
+        </div>
       </div>
     </div>
 
-    <div v-if="showMediaPanel && activeConversation" class="wn-info-panel">
+    <div v-if="showMediaPanel && chat.activeConversationId" class="wn-info-panel">
       <div class="wn-info-header">
         <span>Media & Files</span>
         <button @click="showMediaPanel = false">✕</button>
@@ -487,35 +609,24 @@ async function sendNewChat() {
         <template v-if="!tplSelected">
           <h3>Send a Template</h3>
           <div class="wn-nc-list">
-            <div v-for="t in tplList" :key="t.name" class="wn-nc-item wn-nc-template" @click="pickTplForSend(t)">
-              <div class="wn-nc-item-name">{{ t.template_name }}</div>
+            <div v-for="t in tplList" :key="t.name" class="wn-nc-item wn-nc-template" @click="tplSelected = t">
+              <div class="wn-nc-item-name">{{ t.template_name }} <span class="wn-badge">{{ t.category }}</span></div>
               <div class="wn-nc-item-meta">{{ t.body }}</div>
             </div>
             <p v-if="!tplList.length" class="wn-muted">No approved templates available yet.</p>
           </div>
+          <div class="wn-modal-actions">
+            <button class="ghost" @click="showTplPicker = false">Cancel</button>
+          </div>
         </template>
         <template v-else>
           <h3>{{ tplSelected.template_name }}</h3>
-          <p class="wn-nc-template-body">{{ tplSelected.body }}</p>
-          <template v-if="tplNeedsHeaderMedia">
-            <label>{{ tplSelected.header_type }} Header URL</label>
-            <input v-model="tplHeaderMediaUrl" type="text" placeholder="https://example.com/image.jpg" />
-          </template>
-          <template v-if="tplVariables.length">
-            <label v-for="(v, i) in tplVariables" :key="i">Variable {{ i + 1 }}</label>
-            <input v-for="(v, i) in tplVariables" :key="'tv' + i" v-model="tplVariables[i]" type="text" />
-          </template>
-          <div class="wn-modal-actions">
-            <button class="ghost" @click="tplSelected = null">Back</button>
-            <button class="primary" :disabled="tplSending" @click="sendTplToActiveConversation">
-              {{ tplSending ? 'Sending…' : 'Send' }}
-            </button>
-          </div>
+          <p v-if="info?.opted_out && tplSelected.category === 'Marketing'" class="wn-error">
+            This customer opted out of promotional messages — Marketing templates will be refused.
+          </p>
+          <TemplateSendForm :template="tplSelected" :sending="tplSending" @back="tplSelected = null" @send="sendTplToActiveConversation" />
         </template>
         <p v-if="tplError" class="wn-error">{{ tplError }}</p>
-        <div class="wn-modal-actions" v-if="!tplSelected">
-          <button class="ghost" @click="showTplPicker = false">Cancel</button>
-        </div>
       </div>
     </div>
 
@@ -528,7 +639,7 @@ async function sendNewChat() {
             <div v-if="ncLoadingContacts" class="wn-muted">Loading…</div>
             <div
               v-for="c in ncContacts"
-              :key="c.contact_name"
+              :key="c.contact_name + c.customer"
               class="wn-nc-item"
               @click="pickContact(c)"
             >
@@ -541,6 +652,14 @@ async function sendNewChat() {
             <p v-if="!ncLoadingContacts && !ncContacts.length" class="wn-muted">
               No contacts found — only contacts linked to a customer assigned to you are shown here.
             </p>
+          </div>
+          <label>Or message a number directly</label>
+          <div class="wn-manual-row">
+            <input v-model="ncManualNumber" type="text" placeholder="+91 98765 43210" @keyup.enter="pickManualNumber" />
+            <button class="ghost" @click="pickManualNumber">Next</button>
+          </div>
+          <div class="wn-modal-actions">
+            <button class="ghost" @click="showNewChat = false">Cancel</button>
           </div>
         </template>
 
@@ -555,41 +674,22 @@ async function sendNewChat() {
               v-for="t in ncTemplates"
               :key="t.name"
               class="wn-nc-item wn-nc-template"
-              @click="pickTemplate(t)"
+              @click="ncSelectedTemplate = t"
             >
-              <div class="wn-nc-item-name">{{ t.template_name }}</div>
+              <div class="wn-nc-item-name">{{ t.template_name }} <span class="wn-badge">{{ t.category }}</span></div>
               <div class="wn-nc-item-meta">{{ t.body }}</div>
             </div>
             <p v-if="!ncTemplates.length" class="wn-muted">No approved templates available yet.</p>
+            <div class="wn-modal-actions">
+              <button class="ghost" @click="ncStep = 'contact'">Back</button>
+            </div>
           </div>
 
-          <template v-else>
-            <p class="wn-nc-template-body">{{ ncSelectedTemplate.body }}</p>
-            <template v-if="ncNeedsHeaderMedia">
-              <label>{{ ncSelectedTemplate.header_type }} Header URL (public link required by WhatsApp)</label>
-              <input v-model="ncHeaderMediaUrl" type="text" placeholder="https://example.com/image.jpg" />
-              <p v-if="ncSelectedTemplate.header_example_url" class="wn-hint">
-                Pre-filled from the template's approved example media — edit if you want a different image for this send.
-              </p>
-            </template>
-            <template v-if="ncVariables.length">
-              <label v-for="(v, i) in ncVariables" :key="i">Variable {{ i + 1 }}</label>
-              <input v-for="(v, i) in ncVariables" :key="'in' + i" v-model="ncVariables[i]" type="text" />
-            </template>
-            <div class="wn-modal-actions">
-              <button class="ghost" @click="ncSelectedTemplate = null">Back</button>
-              <button class="primary" :disabled="ncSending" @click="sendNewChat">
-                {{ ncSending ? 'Sending…' : 'Send' }}
-              </button>
-            </div>
-          </template>
+          <TemplateSendForm v-else :template="ncSelectedTemplate" :sending="ncSending"
+                            @back="ncSelectedTemplate = null" @send="sendNewChat" />
         </template>
 
         <p v-if="ncError" class="wn-error">{{ ncError }}</p>
-
-        <div class="wn-modal-actions" v-if="ncStep === 'contact'">
-          <button class="ghost" @click="showNewChat = false">Cancel</button>
-        </div>
       </div>
     </div>
   </div>
@@ -618,15 +718,20 @@ async function sendNewChat() {
 .wn-chat-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .wn-chat-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--wn-border); }
 .wn-chat-header-name { flex: 1; min-width: 0; }
+.wn-back-btn { display: none; }
 .wn-info-btn { background: none; border: none; color: var(--wn-text-muted); cursor: pointer; padding: 6px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; }
 .wn-info-btn:hover { color: var(--wn-teal); }
-.wn-info-panel { position: absolute; top: 0; right: 0; bottom: 0; width: 280px; background: white; box-shadow: -2px 0 8px rgba(0,0,0,0.08); padding: 16px; z-index: 40; overflow-y: auto; }
+.wn-info-panel { position: absolute; top: 0; right: 0; bottom: 0; width: 300px; max-width: 100%; background: white; box-shadow: -2px 0 8px rgba(0,0,0,0.08); padding: 16px; z-index: 40; overflow-y: auto; }
 .wn-info-header { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 14px; margin-bottom: 16px; }
 .wn-info-header button { background: none; border: none; font-size: 14px; color: var(--wn-text-muted); cursor: pointer; }
 .wn-info-avatar { width: 64px; height: 64px; border-radius: 50%; background: var(--wn-navy); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 24px; margin: 0 auto 10px; }
 .wn-info-name { text-align: center; font-weight: 600; font-size: 15px; margin-bottom: 16px; }
-.wn-info-row { display: flex; flex-direction: column; gap: 2px; padding: 10px 0; border-top: 1px solid var(--wn-border); font-size: 13px; }
+.wn-info-row { display: flex; flex-direction: column; gap: 4px; padding: 10px 0; border-top: 1px solid var(--wn-border); font-size: 13px; }
+.wn-info-row select { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--wn-border); font-size: 13px; }
+.wn-info-row a { color: var(--wn-blue); }
 .wn-info-label { font-size: 11px; color: var(--wn-text-muted); font-weight: 600; text-transform: uppercase; }
+.wn-scheduled-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; }
+.wn-muted-small { font-size: 11.5px; color: var(--wn-text-muted); }
 .wn-media-tabs { display: flex; gap: 4px; margin-bottom: 14px; }
 .wn-media-tabs button { flex: 1; padding: 6px 0; border: none; background: var(--wn-bg); border-radius: 6px; font-size: 11.5px; color: var(--wn-text-muted); }
 .wn-media-tabs button.active { background: var(--wn-teal); color: white; font-weight: 600; }
@@ -636,9 +741,10 @@ async function sendNewChat() {
 .wn-media-doc-item { font-size: 12.5px; color: var(--wn-blue); }
 .wn-media-audio { width: 100%; }
 .wn-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--wn-navy); color: white; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; }
-.wn-chat-name { font-weight: 600; font-size: 14px; }
-.wn-chat-phone { font-size: 12px; color: var(--wn-text-muted); }
+.wn-chat-name { font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wn-chat-phone { font-size: 12px; color: var(--wn-text-muted); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .wn-messages { flex: 1; overflow-y: auto; padding: 16px; background: var(--wn-bg); }
+.wn-older-row { display: flex; justify-content: center; margin-bottom: 8px; }
 .wn-date-pill-row { display: flex; justify-content: center; margin: 12px 0; position: sticky; top: 0; z-index: 1; }
 .wn-date-pill {
   background: #e9edef;
@@ -650,10 +756,20 @@ async function sendNewChat() {
   box-shadow: 0 1px 0.5px rgba(0,0,0,0.08);
 }
 .wn-loading { text-align: center; font-size: 12px; color: var(--wn-text-muted); }
-.wn-composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--wn-border); }
-.wn-composer input { flex: 1; padding: 10px 14px; border-radius: 20px; border: 1px solid var(--wn-border); font-size: 14px; }
+.wn-window-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; background: #fef3c7; color: #92400e; font-size: 12.5px; border-top: 1px solid #fde68a; }
+.wn-window-hint { padding: 4px 12px; font-size: 11px; color: var(--wn-text-muted); text-align: right; }
+.wn-scheduled-strip { padding: 6px 12px; font-size: 12px; color: var(--wn-text-muted); background: var(--wn-teal-light); }
+.wn-link { background: none; border: none; color: var(--wn-blue); padding: 0; font-size: inherit; text-decoration: underline; }
+.wn-schedule-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px 0; font-size: 12.5px; }
+.wn-schedule-row input { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--wn-border); }
+.wn-composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--wn-border); align-items: center; }
+.wn-composer input { flex: 1; min-width: 0; padding: 10px 14px; border-radius: 20px; border: 1px solid var(--wn-border); font-size: 14px; }
+.wn-composer input:disabled { background: var(--wn-bg); }
 .wn-composer button { padding: 10px 18px; border-radius: 20px; border: none; background: var(--wn-teal); color: white; font-weight: 600; }
+.wn-composer button:disabled { opacity: 0.5; }
+.wn-provider-select { padding: 8px; border-radius: 20px; border: 1px solid var(--wn-border); font-size: 12px; background: white; max-width: 120px; }
 .wn-tpl-btn { background: var(--wn-bg) !important; color: var(--wn-text-muted) !important; padding: 8px 12px !important; border-radius: 20px !important; display: inline-flex; align-items: center; justify-content: center; }
+.wn-tpl-btn.active { color: var(--wn-teal) !important; background: var(--wn-teal-light) !important; }
 .wn-tpl-btn:disabled { opacity: 0.5; }
 .wn-hidden-file-input { display: none; }
 .wn-composer-error { padding: 0 12px; margin: 0; }
@@ -672,20 +788,32 @@ async function sendNewChat() {
 .wn-nc-item:hover { background: var(--wn-bg); }
 .wn-nc-item-body { min-width: 0; }
 .wn-nc-item-name { font-weight: 600; font-size: 13.5px; }
-.wn-nc-item-meta { font-size: 11.5px; color: var(--wn-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wn-nc-item-meta { font-size: 11.5px; color: var(--wn-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .wn-nc-template { flex-direction: column; align-items: flex-start; }
-.wn-nc-template-body { font-size: 13px; background: var(--wn-bg); padding: 10px; border-radius: 8px; white-space: pre-wrap; }
 .wn-hint { font-size: 11.5px; color: var(--wn-text-muted); margin-top: -6px; margin-bottom: 12px; }
+.wn-manual-row { display: flex; gap: 8px; }
+.wn-manual-row input { flex: 1; }
 .wn-modal label { display: block; font-size: 12px; font-weight: 600; color: var(--wn-text-muted); margin: 10px 0 4px; }
 .wn-modal input[type="text"] { width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--wn-border); font-size: 13px; }
 .wn-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
-button.primary { background: var(--wn-teal); color: white; border: none; padding: 10px 18px; border-radius: 8px; font-weight: 600; font-size: 13px; }
-button.ghost { background: white; border: 1px solid var(--wn-border); padding: 10px 18px; border-radius: 8px; font-size: 13px; }
 .wn-muted { color: var(--wn-text-muted); font-size: 13px; padding: 10px 0; }
 .wn-error { color: var(--wn-red); font-size: 12.5px; margin-top: 10px; }
 
+/* Phones: one pane at a time — the list, or the open chat with a back
+   button. (Previously the chat pane was simply hidden below 768px, so a
+   conversation could never be opened on a phone.) */
 @media (max-width: 768px) {
-  .wn-conv-pane { width: 100%; }
+  .wn-conv-pane { width: 100%; border-right: none; }
   .wn-chat-pane { display: none; }
+  .wn-chat-layout.has-active .wn-conv-pane { display: none; }
+  .wn-chat-layout.has-active .wn-chat-pane { display: flex; }
+  .wn-back-btn { display: inline-flex; }
+  .wn-hide-mobile { display: none !important; }
+  .wn-chat-header { padding: 8px 10px; gap: 6px; }
+  .wn-composer { padding: 8px; gap: 6px; }
+  .wn-composer button[type="submit"] { padding: 10px 14px; }
+  .wn-filter-tabs { overflow-x: auto; }
+  .wn-filter-tabs button { flex: 0 0 auto; padding: 5px 10px; }
+  .wn-window-banner { flex-direction: column; align-items: stretch; }
 }
 </style>

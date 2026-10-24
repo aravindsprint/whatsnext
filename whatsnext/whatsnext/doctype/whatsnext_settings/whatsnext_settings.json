@@ -19,18 +19,27 @@
   "column_meta_1",
   "meta_access_token",
   "meta_webhook_verify_token",
+  "meta_app_secret",
   "section_twilio",
   "twilio_enabled",
   "twilio_account_sid",
   "twilio_whatsapp_number",
   "column_twilio_1",
   "twilio_auth_token",
+  "twilio_verify_signature",
   "section_push",
   "push_notifications_enabled",
   "vapid_public_key",
   "column_push_1",
   "vapid_private_key",
-  "vapid_subject"
+  "vapid_subject",
+  "section_opt_out",
+  "opt_out_enabled",
+  "opt_out_keywords",
+  "opt_in_keywords",
+  "column_opt_out_1",
+  "opt_out_confirmation",
+  "opt_in_confirmation"
  ],
  "fields": [
   {
@@ -106,6 +115,12 @@
    "label": "Webhook Verify Token"
   },
   {
+   "fieldname": "meta_app_secret",
+   "fieldtype": "Password",
+   "label": "App Secret (verifies webhook signatures)",
+   "description": "From Meta App Dashboard → App settings → Basic. When set, incoming webhooks without a valid X-Hub-Signature-256 are rejected."
+  },
+  {
    "fieldname": "section_twilio",
    "fieldtype": "Section Break",
    "label": "Twilio WhatsApp API"
@@ -136,6 +151,13 @@
    "label": "Auth Token"
   },
   {
+   "fieldname": "twilio_verify_signature",
+   "fieldtype": "Check",
+   "label": "Verify Twilio Webhook Signatures",
+   "default": "0",
+   "description": "Reject Twilio webhooks without a valid X-Twilio-Signature. Turn on once the webhook URLs in Twilio exactly match this site's public URL."
+  },
+  {
    "fieldname": "section_push",
    "fieldtype": "Section Break",
    "label": "Browser / Mobile Push Notifications"
@@ -144,7 +166,7 @@
    "fieldname": "push_notifications_enabled",
    "fieldtype": "Check",
    "label": "Enable Push Notifications",
-   "description": "Sends a real OS-level notification (web push) to every subscribed user's device when a new incoming WhatsApp message arrives \u2014 even if the browser tab or installed PWA is closed."
+   "description": "Sends a real OS-level notification (web push) to every subscribed user's device when a new incoming WhatsApp message arrives — even if the browser tab or installed PWA is closed."
   },
   {
    "fieldname": "vapid_public_key",
@@ -162,13 +184,57 @@
    "fieldtype": "Password",
    "label": "VAPID Private Key",
    "read_only": 1,
-   "description": "Auto-generated on first use. Never sent to the frontend \u2014 used server-side to sign push messages."
+   "description": "Auto-generated on first use. Never sent to the frontend — used server-side to sign push messages."
   },
   {
    "fieldname": "vapid_subject",
    "fieldtype": "Data",
    "label": "VAPID Subject (mailto: or https:// contact)",
    "description": "Required by the push spec so push services can contact you about this sender if needed, e.g. mailto:admin@example.com"
+  },
+  {
+   "fieldname": "section_opt_out",
+   "fieldtype": "Section Break",
+   "label": "Opt-out (STOP / START)"
+  },
+  {
+   "fieldname": "opt_out_enabled",
+   "fieldtype": "Check",
+   "label": "Handle Opt-out Keywords",
+   "default": "1",
+   "description": "Customers who reply with an opt-out keyword stop receiving Marketing templates and campaigns."
+  },
+  {
+   "fieldname": "opt_out_keywords",
+   "fieldtype": "Small Text",
+   "label": "Opt-out Keywords (one per line)",
+   "default": "STOP\nUNSUBSCRIBE\nSTOP ALL",
+   "depends_on": "opt_out_enabled"
+  },
+  {
+   "fieldname": "opt_in_keywords",
+   "fieldtype": "Small Text",
+   "label": "Opt-in Keywords (one per line)",
+   "default": "START\nSUBSCRIBE",
+   "depends_on": "opt_out_enabled"
+  },
+  {
+   "fieldname": "column_opt_out_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "opt_out_confirmation",
+   "fieldtype": "Small Text",
+   "label": "Opt-out Confirmation Reply",
+   "default": "You have been unsubscribed and won't receive promotional messages from us. Reply START to subscribe again.",
+   "depends_on": "opt_out_enabled"
+  },
+  {
+   "fieldname": "opt_in_confirmation",
+   "fieldtype": "Small Text",
+   "label": "Opt-in Confirmation Reply",
+   "default": "You are subscribed again. Reply STOP to unsubscribe at any time.",
+   "depends_on": "opt_out_enabled"
   }
  ],
  "permissions": [
