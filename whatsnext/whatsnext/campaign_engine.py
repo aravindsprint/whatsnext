@@ -39,8 +39,32 @@ def start_campaign(campaign_name: str):
 	)
 
 
+def _recount(campaign_name):
+	"""Counts straight from the recipient rows. Delivery webhooks move rows
+	on (Delivered/Read, or Failed after Sent) while a run is in progress, so
+	running totals kept in memory drift."""
+	counts = dict(frappe.db.sql(
+		"""SELECT status, COUNT(*) FROM `tabWhatsnext Campaign Recipient`
+		WHERE parent = %s AND parenttype = 'Whatsnext Campaign' GROUP BY status""",
+		(campaign_name,),
+	))
+	delivered = counts.get("Delivered", 0) + counts.get("Read", 0)
+	return {
+		"sent_count": counts.get("Sent", 0) + delivered,
+		"delivered_count": delivered,
+		"failed_count": counts.get("Failed", 0),
+		"skipped_count": counts.get("Skipped", 0),
+		"pending": counts.get("Pending", 0),
+	}
+
+
 def run_campaign(campaign_name: str):
+	from whatsnext.whatsnext.api import _render_body
+	from whatsnext.whatsnext.conversations import is_opted_out
+
 	campaign = frappe.get_doc("Whatsnext Campaign", campaign_name)
+	if campaign.status not in ("Queued", "Sending"):
+		return  # paused/cancelled before the job started
 	# update_modified=True throughout: scheduler.recover_stuck_messages marks
 	# any campaign whose `modified` is >30 minutes old as Failed. With
 	# update_modified=False a healthy campaign of more than ~1,800
@@ -50,18 +74,20 @@ def run_campaign(campaign_name: str):
 
 	template = frappe.get_doc("Whatsnext Message Template", campaign.template)
 	provider_name = campaign.provider or None
+	respect_opt_out = template.category == "Marketing"
 
-	sent = failed = 0
-
-	for row in campaign.recipients:
+	for i, row in enumerate(campaign.recipients):
 		if row.status != "Pending":
-			# already processed (e.g. this is a retry run) — just fold its
-			# current status into the running totals and move on
-			if row.status == "Failed":
-				failed += 1
-			else:
-				sent += 1
-			continue
+			continue  # already processed (e.g. a resumed or retried run)
+
+		# Pause/cancel is checked between sends so it takes effect within a
+		# second instead of after the whole list.
+		if i % 5 == 0:
+			current = frappe.db.get_value("Whatsnext Campaign", campaign_name, "status")
+			if current in ("Paused", "Cancelled"):
+				campaign.db_set(_counts_only(campaign_name))
+				frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background job
+				return
 
 		params = {}
 		if row.parameters:
@@ -70,8 +96,15 @@ def run_campaign(campaign_name: str):
 			except Exception:
 				params = {}
 
+		to_number = normalize_outbound_number(row.to_number)
+
+		if respect_opt_out and is_opted_out(to_number):
+			row.db_set({"status": "Skipped", "error_message": "Opted out of promotional messages"}, update_modified=False)
+			campaign.db_set(_counts_only(campaign_name))
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background job
+			continue
+
 		try:
-			to_number = normalize_outbound_number(row.to_number)
 			provider = get_provider(provider_name)
 			# Media-header templates need a header link (same fallback the
 			# chat UI pre-fills); without one Meta rejects every send.
@@ -90,7 +123,7 @@ def run_campaign(campaign_name: str):
 				# Linked to the customer like every other outgoing message, so
 				# campaign sends appear in the assigned Sales Person's chats.
 				"customer": resolve_customer_from_phone(to_number),
-				"message": template.body,
+				"message": _render_body(template.body, params),
 				"message_type": "Template",
 				"content_type": "text",
 				"template": template.name,
@@ -104,45 +137,31 @@ def run_campaign(campaign_name: str):
 			if provider_message_id:
 				msg.db_set("provider_message_id", provider_message_id, update_modified=False)
 
-			row.db_set("status", "Sent", update_modified=False)
-			row.db_set("message", msg.name, update_modified=False)
-			sent += 1
+			row.db_set({"status": "Sent", "message": msg.name, "error_message": ""}, update_modified=False)
 
 		except WhatsAppSendError as e:
-			row.db_set("status", "Failed", update_modified=False)
-			row.db_set("error_message", str(e)[:140], update_modified=False)
-			failed += 1
+			row.db_set({"status": "Failed", "error_message": str(e)[:140]}, update_modified=False)
 		except Exception as e:
 			frappe.log_error(frappe.get_traceback(), f"Whatsnext campaign send failed: {campaign_name} -> {row.to_number}")
-			row.db_set("status", "Failed", update_modified=False)
-			row.db_set("error_message", str(e)[:140], update_modified=False)
-			failed += 1
+			row.db_set({"status": "Failed", "error_message": str(e)[:140]}, update_modified=False)
 
 		# write progress after every send so the frontend's poll reflects
 		# reality, not just the final count once the whole job finishes
-		campaign.db_set({"sent_count": sent, "failed_count": failed})
+		campaign.db_set(_counts_only(campaign_name))
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- long-running background job, must persist progress incrementally
 
 		time.sleep(SEND_INTERVAL_SECONDS)
 
-	# Final counts from the rows themselves: delivery webhooks may already
-	# have moved some recipients on (Delivered/Read, or Failed after Sent)
-	# while this loop was still writing its running totals.
-	counts = dict(frappe.db.sql(
-		"""SELECT status, COUNT(*) FROM `tabWhatsnext Campaign Recipient`
-		WHERE parent = %s AND parenttype = 'Whatsnext Campaign' GROUP BY status""",
-		(campaign.name,),
-	))
-	delivered = counts.get("Delivered", 0) + counts.get("Read", 0)
-	sent = counts.get("Sent", 0) + delivered
-	failed = counts.get("Failed", 0)
-	campaign.db_set({
-		"sent_count": sent,
-		"delivered_count": delivered,
-		"failed_count": failed,
-		"status": "Failed" if sent == 0 and failed else "Completed",
-	})
+	counts = _counts_only(campaign_name)
+	counts["status"] = "Failed" if counts["sent_count"] == 0 and counts["failed_count"] else "Completed"
+	campaign.db_set(counts)
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- final state must land
+
+
+def _counts_only(campaign_name):
+	counts = _recount(campaign_name)
+	counts.pop("pending")
+	return counts
 
 
 def _extract_provider_message_id(provider_name, result):

@@ -54,6 +54,12 @@ def get_message_permission_query_conditions(user=None):
 	)
 
 
+def get_conversation_permission_query_conditions(user=None):
+	return get_message_permission_query_conditions(user).replace(
+		"`tabWhatsnext Message`", "`tabWhatsnext Conversation`"
+	)
+
+
 def has_message_permission(doc, user=None, permission_type=None):
 	user = user or frappe.session.user
 	customers = get_allowed_customers(user)

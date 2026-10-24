@@ -10,17 +10,35 @@ Most WhatsApp-for-ERPNext tools stop at "send a templated message when X happens
 
 ## Features
 
-- **Two-way chat, not just outbound sends** — a real conversation UI (inbox, threads, media, read/delivered status) synced to ERPNext documents (Customers, Contacts, Leads, etc.), not a one-way notification log
-- Meta WhatsApp Cloud API and Twilio support, selectable per-message or system-wide
-- Reusable message templates with `{{1}}`, `{{2}}` variable substitution
-- Event-driven notifications — fire a WhatsApp message automatically on
-  Sales Order, Sales Invoice, Delivery Note, Quotation, Payment Entry,
-  Purchase Order, Purchase Invoice, Lead, Opportunity, Customer, or Supplier
-  Submit / Update / Change via the **WhatsApp Notification** doctype
-- Scheduled sends, with a safety-net job that recovers stuck messages
-- Dashboard: message queue, delivery status donut, weekly trend, top templates,
-  recent activity
-- Offline-friendly conversation list (Dexie/IndexedDB cache) and installable PWA
+**Chat**
+- **Two-way chat, not just outbound sends** — inbox, threads, media, read/delivered ticks, live updates
+- Chats linked to the ERPNext **Contact** and **Customer** automatically by phone number
+- **Assign** chats to team members, **close/reopen** them, filter by *Mine* / *Unread* / *Closed*
+- **24-hour window awareness** — the composer switches to templates-only (with a clear banner) when WhatsApp no longer allows free-form replies
+- **Schedule** a message or template for later; scheduled items can be cancelled from the chat
+- Pick **Meta or Twilio per message** (when both are enabled), or use the default
+- Incoming text, images, video, audio, documents, stickers, locations, shared contacts, reactions and **template quick-reply button taps**
+- Load earlier messages, Media & Files panel, offline-friendly chat list (IndexedDB), installable PWA, push notifications
+
+**Templates**
+- `{{1}}`, `{{2}}` body variables, text-header variables, dynamic URL-button suffixes, media headers
+- Create a template in the app and **submit it to Meta for review**; approval/rejection updates arrive by webhook (plus a nightly refresh)
+- Sync existing templates from Meta
+
+**Campaigns**
+- Bulk template sends from CSV or saved recipient lists, paced to respect rate limits
+- **Schedule**, **pause/resume**, **cancel**, **retry failed**; delivered counts follow delivery receipts
+- Excel/PDF result export
+
+**Automation**
+- **Whatsnext Notification**: send a template when a document is created, submitted, updated or changed — instant for common doctypes (Sales Invoice, Sales Order, Delivery Note, Quotation, Payment Entry, Purchase Order/Invoice, Lead, Opportunity, Customer, Supplier, Issue, Employee…), every 5 minutes for any other doctype. Manage them in the app under **Notifications**.
+- Attach the document's print as a PDF header
+- **WhatsApp button on ERPNext forms** (Customer, Contact, Lead, Sales Invoice, Sales Order, Quotation, Delivery Note, Payment Entry…) to send a template — optionally with the document PDF — and jump to the chat
+
+**Compliance & security**
+- **Opt-out handling**: replies like STOP/UNSUBSCRIBE opt the number out of Marketing templates and campaigns (START opts back in), with configurable keywords and confirmations
+- Meta webhook **signature verification** (App Secret) and optional Twilio signature verification
+- Per-Sales-Person visibility: users only see chats, dashboard figures and pushes for their own customers (System Managers see everything)
 
 ## Architecture
 
@@ -30,13 +48,18 @@ folder conventions, auth/CSRF pattern, and deploy checklist.
 
 ## Configure
 
-1. Go to **WhatsApp Settings** (Desk, System Manager only, or `/whatsnext/settings` in the SPA).
-2. Enable Meta and/or Twilio, fill in credentials.
-3. Meta webhook URL (set in Meta App dashboard → WhatsApp → Configuration):
+1. Open **Whatsnext Settings** (Desk, or `/whatsnext/settings` in the app — System Managers).
+2. Enable Meta and/or Twilio and fill in the credentials. For Meta, also set the **App ID** (needed to submit media-header templates) and the **App Secret** (verifies webhooks).
+3. Meta webhook URL (Meta App Dashboard → WhatsApp → Configuration), subscribed to `messages` and `message_template_status_update`:
    `https://<your-site>/api/method/whatsnext.whatsnext.api.webhook.meta_webhook`
-4. Twilio webhook URLs (set in Twilio Console → WhatsApp Sender):
+4. Twilio webhook URLs (Twilio Console → WhatsApp Sender):
    - Inbound: `https://<your-site>/api/method/whatsnext.whatsnext.api.webhook.twilio_webhook`
    - Status callback: `https://<your-site>/api/method/whatsnext.whatsnext.api.webhook.twilio_status_callback`
+   - Once these work, turn on **Verify Twilio Webhook Signatures**.
+5. Give agents the **Whatsnext User** role. To scope what they see, link their Employee to a Sales Person and add that Sales Person to customers' Sales Team.
+6. Review the **Opt-out** keywords and confirmation messages.
+
+After updating the app run `bench --site <site> migrate` and restart workers.
 
 ## Frontend dev
 

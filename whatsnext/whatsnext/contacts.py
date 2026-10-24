@@ -27,11 +27,9 @@ def normalize_outbound_number(number: str) -> str:
 	return digits
 
 
-def resolve_customer_from_phone(phone: str) -> str | None:
-	"""Best-effort lookup: WhatsApp number -> Contact (via Contact Phone) ->
-	Customer (via the Contact's Dynamic Link rows). Returns None if no
-	Contact matches or no Customer is linked — callers should treat that as
-	'unassigned', not an error."""
+def resolve_contact_from_phone(phone: str) -> str | None:
+	"""WhatsApp number -> Contact (via Contact Phone rows, matched on the
+	last 10 digits so country-code/formatting differences don't matter)."""
 	if not phone:
 		return None
 
@@ -43,16 +41,26 @@ def resolve_customer_from_phone(phone: str) -> str | None:
 		"""
 		SELECT parent FROM `tabContact Phone`
 		WHERE parenttype = 'Contact' AND phone LIKE %s
+		ORDER BY is_primary_mobile_no DESC, is_primary_phone DESC
 		LIMIT 1
 		""",
 		(f"%{target}",),
 	)
-	contact_name = row[0][0] if row else None
+	return row[0][0] if row else None
+
+
+def customer_for_contact(contact_name: str | None) -> str | None:
 	if not contact_name:
 		return None
-
 	return frappe.db.get_value(
 		"Dynamic Link",
 		{"parenttype": "Contact", "parent": contact_name, "link_doctype": "Customer"},
 		"link_name",
 	)
+
+
+def resolve_customer_from_phone(phone: str) -> str | None:
+	"""Best-effort lookup: WhatsApp number -> Contact -> Customer (via the
+	Contact's Dynamic Link rows). Returns None if no Contact matches or no
+	Customer is linked — callers should treat that as 'unassigned'."""
+	return customer_for_contact(resolve_contact_from_phone(phone))

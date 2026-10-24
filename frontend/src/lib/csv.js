@@ -23,6 +23,14 @@ export function parseRecipientsCsv(text) {
   const isHeader = hasNameCol || hasPhoneHeader
 
   const dataLines = isHeader ? lines.slice(1) : lines
+  // Header names for the variable columns: "1", "2", "header_1",
+  // "button_0" target those template inputs directly; anything else falls
+  // back to positional numbering.
+  const varHeaders = isHeader ? first.slice(hasNameCol ? 2 : 1) : []
+  const keyFor = (i) => {
+    const h = (varHeaders[i] || '').trim()
+    return /^(\d+|header_1|button_\d+)$/.test(h) ? h : String(i + 1)
+  }
 
   return dataLines
     .map((line) => {
@@ -59,7 +67,7 @@ export function parseRecipientsCsv(text) {
 
       const parameters = {}
       rest.forEach((val, i) => {
-        parameters[String(i + 1)] = val
+        parameters[keyFor(i)] = val
       })
       return { contact_name, to_number, parameters, valid: looksLikePhone(to_number) }
     })
@@ -70,12 +78,20 @@ export function parseRecipientsCsv(text) {
 export function recipientsToCsv(recipients) {
   const hasNames = recipients.some((r) => r.contact_name)
   const header = hasNames ? ['name', 'phone'] : ['phone']
-  const maxVars = Math.max(0, ...recipients.map((r) => Object.keys(r.parameters || {}).length))
-  for (let i = 1; i <= maxVars; i++) header.push(String(i))
+  // Every parameter key used by any recipient, body variables first in
+  // numeric order, then header/button keys.
+  const keys = [...new Set(recipients.flatMap((r) => Object.keys(r.parameters || {})))]
+  keys.sort((a, b) => {
+    const na = /^\d+$/.test(a), nb = /^\d+$/.test(b)
+    if (na && nb) return Number(a) - Number(b)
+    if (na !== nb) return na ? -1 : 1
+    return a.localeCompare(b)
+  })
+  header.push(...keys)
 
   const rows = recipients.map((r) => {
     const cells = hasNames ? [r.contact_name || '', r.to_number] : [r.to_number]
-    for (let i = 1; i <= maxVars; i++) cells.push((r.parameters || {})[String(i)] || '')
+    for (const k of keys) cells.push((r.parameters || {})[k] || '')
     return cells.join(',')
   })
 

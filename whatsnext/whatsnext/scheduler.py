@@ -28,6 +28,32 @@ def dispatch_scheduled_messages():
 		# Media-header templates need their header URL back, which lives on
 		# the message's attach field -- without it Meta rejects the send.
 		_dispatch(msg, template_doc=template_doc, params=params, header_media_url=msg.attach or None)
+		# Place it in the chat timeline when it actually went out, not when it
+		# was scheduled (the timeline is ordered by creation).
+		frappe.db.set_value("Whatsnext Message", msg.name, "creation", now_datetime(), update_modified=False)
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- scheduled job, one message at a time
+		from whatsnext.whatsnext.doctype.whatsnext_message.whatsnext_message import publish_message_event
+
+		msg.reload()
+		publish_message_event(msg, event="whatsnext_new_message")
+
+
+def start_scheduled_campaigns():
+	"""Runs every 5 minutes. Starts campaigns whose scheduled_time has arrived."""
+	due = frappe.get_all(
+		"Whatsnext Campaign",
+		filters={"status": "Scheduled", "scheduled_time": ["<=", now_datetime()]},
+		pluck="name",
+	)
+	if not due:
+		return
+
+	from whatsnext.whatsnext.campaign_engine import start_campaign
+
+	for name in due:
+		frappe.db.set_value("Whatsnext Campaign", name, "status", "Queued")
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- scheduled job; status must land before the worker picks it up
+		start_campaign(name)
 
 
 def recover_stuck_messages():

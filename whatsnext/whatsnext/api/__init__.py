@@ -5,7 +5,7 @@ from datetime import timedelta
 import frappe
 from frappe.utils import now_datetime, add_to_date, getdate
 
-from whatsnext.whatsnext.provider_engine import get_provider, WhatsAppSendError, MetaProvider
+from whatsnext.whatsnext.provider_engine import get_provider, WhatsAppSendError, MetaProvider, meta_template_name
 from whatsnext.whatsnext.contacts import resolve_customer_from_phone, normalize_outbound_number
 from whatsnext.whatsnext.permissions import get_allowed_customers
 
@@ -25,11 +25,34 @@ def get_csrf_token():
 
 @frappe.whitelist()
 def whoami():
+	"""Session info plus the app configuration the SPA needs: which
+	providers can be picked per message, and who chats can be assigned to."""
 	roles = frappe.get_roles(frappe.session.user)
+	settings = frappe.get_cached_doc("Whatsnext Settings")
+	providers = [p for p, on in (("Meta", settings.meta_enabled), ("Twilio", settings.twilio_enabled)) if on]
+
+	agent_ids = set(frappe.get_all(
+		"Has Role",
+		filters={"parenttype": "User", "role": ["in", ["Whatsnext User", "System Manager"]]},
+		pluck="parent",
+		distinct=True,
+	)) - {"Administrator", "Guest"}
+	agents = frappe.get_all(
+		"User",
+		filters={"name": ["in", list(agent_ids) or [""]], "enabled": 1, "user_type": "System User"},
+		fields=["name", "full_name"],
+		order_by="full_name asc",
+	)
+
 	return {
 		"user": frappe.session.user,
+		"full_name": frappe.utils.get_fullname(frappe.session.user),
 		"roles": roles,
 		"is_system_manager": "System Manager" in roles,
+		"providers": providers,
+		"default_provider": settings.default_provider,
+		"opt_out_enabled": bool(settings.opt_out_enabled),
+		"agents": agents,
 	}
 
 
@@ -250,7 +273,8 @@ def _conversation_scope_where(search: str = None):
 def get_conversations(limit: int = 100, offset: int = 0, search: str = None, filter: str = None):
 	"""Latest message per conversation_id, newest first. Scoped to the
 	logged-in user's assigned customers unless System Manager/Admin.
-	filter: None/'all', 'unread', 'incoming', 'outgoing'."""
+	filter: None/'all', 'unread', 'mine', 'closed', 'incoming', 'outgoing'.
+	'all' and the others hide Closed chats; 'closed' shows only those."""
 	limit = int(limit)
 	offset = int(offset)
 	filter = _clean_param(filter)
@@ -313,12 +337,38 @@ def get_conversations(limit: int = 100, offset: int = 0, search: str = None, fil
 	else:
 		profile_names = {}
 
+	conversations = {}
+	if rows:
+		conversations = {
+			c.name: c for c in frappe.get_all(
+				"Whatsnext Conversation",
+				filters={"name": ["in", list(conv_ids)]},
+				fields=["name", "status", "assigned_to", "last_incoming_at", "profile_name", "contact"],
+			)
+		}
+
+	from whatsnext.whatsnext.conversations import SERVICE_WINDOW_HOURS
+
+	window_cutoff = add_to_date(now_datetime(), hours=-SERVICE_WINDOW_HOURS)
 	for r in rows:
 		r["is_unread"] = r["conversation_id"] in unread_ids
+		conv = conversations.get(r["conversation_id"]) or {}
 		if not r.get("profile_name"):
-			r["profile_name"] = profile_names.get(r["conversation_id"])
+			r["profile_name"] = profile_names.get(r["conversation_id"]) or conv.get("profile_name")
+		r["conversation_status"] = conv.get("status") or "Open"
+		r["assigned_to"] = conv.get("assigned_to")
+		r["contact"] = r.get("contact") or conv.get("contact")
+		r["last_incoming_at"] = conv.get("last_incoming_at")
+		r["window_open"] = bool(conv.get("last_incoming_at") and conv["last_incoming_at"] > window_cutoff)
 
-	if filter == "unread":
+	if filter == "closed":
+		rows = [r for r in rows if r["conversation_status"] == "Closed"]
+	else:
+		rows = [r for r in rows if r["conversation_status"] != "Closed"]
+
+	if filter == "mine":
+		rows = [r for r in rows if r["assigned_to"] == frappe.session.user]
+	elif filter == "unread":
 		rows = [r for r in rows if r["is_unread"]]
 	elif filter == "incoming":
 		rows = [r for r in rows if r["type"] == "Incoming"]
@@ -411,6 +461,9 @@ def get_messages(conversation_id: str, limit: int = 100, offset: int = 0):
 	rows = frappe.get_all(
 		"Whatsnext Message",
 		filters={"conversation_id": conversation_id},
+		# Scheduled messages that haven't gone out yet aren't part of the
+		# timeline (they're listed in get_conversation_info instead).
+		or_filters={"scheduled_time": ["is", "not set"], "status": ["!=", "Pending"]},
 		fields=MESSAGE_FIELDS,
 		order_by="creation desc, name desc",
 		limit_page_length=int(limit),
@@ -435,6 +488,78 @@ def mark_as_read(conversation_id: str):
 	return {"ok": True}
 
 
+@frappe.whitelist()
+def get_conversation_info(conversation_id: str):
+	"""Everything the chat header/side panel needs about one thread."""
+	_assert_conversation_access(conversation_id)
+	from whatsnext.whatsnext.conversations import is_opted_out, window_expires_at
+
+	conv = frappe.db.get_value(
+		"Whatsnext Conversation", conversation_id,
+		["status", "assigned_to", "customer", "contact", "profile_name", "last_incoming_at"],
+		as_dict=True,
+	) or frappe._dict(status="Open")
+	expires = window_expires_at(conversation_id)
+	return {
+		"conversation_id": conversation_id,
+		"status": conv.status or "Open",
+		"assigned_to": conv.assigned_to,
+		"assigned_to_name": frappe.utils.get_fullname(conv.assigned_to) if conv.assigned_to else None,
+		"customer": conv.customer,
+		"contact": conv.contact,
+		"profile_name": conv.profile_name,
+		"window_expires_at": expires,
+		"window_open": bool(expires and expires > now_datetime()),
+		"opted_out": is_opted_out(conversation_id),
+		"scheduled": frappe.get_all(
+			"Whatsnext Message",
+			filters={"conversation_id": conversation_id, "status": "Pending", "scheduled_time": ["is", "set"]},
+			fields=["name", "message", "template", "scheduled_time"],
+			order_by="scheduled_time asc",
+		),
+	}
+
+
+def _ensure_conversation(conversation_id: str):
+	if not frappe.db.exists("Whatsnext Conversation", conversation_id):
+		frappe.get_doc({
+			"doctype": "Whatsnext Conversation",
+			"conversation_id": conversation_id,
+			"status": "Open",
+		}).insert(ignore_permissions=True)
+
+
+@frappe.whitelist()
+def assign_conversation(conversation_id: str, user: str | None = None):
+	_assert_conversation_access(conversation_id)
+	user = _clean_param(user)
+	if user and not frappe.db.exists("User", {"name": user, "enabled": 1}):
+		frappe.throw(f"User {user} not found.")
+	_ensure_conversation(conversation_id)
+	frappe.db.set_value("Whatsnext Conversation", conversation_id, "assigned_to", user or None)
+	return get_conversation_info(conversation_id)
+
+
+@frappe.whitelist()
+def set_conversation_status(conversation_id: str, status: str):
+	_assert_conversation_access(conversation_id)
+	if status not in ("Open", "Closed"):
+		frappe.throw("Status must be Open or Closed.")
+	_ensure_conversation(conversation_id)
+	frappe.db.set_value("Whatsnext Conversation", conversation_id, "status", status)
+	return get_conversation_info(conversation_id)
+
+
+@frappe.whitelist()
+def set_opt_out(conversation_id: str, opted_out: int | bool):
+	"""Manually opt a number out of (or back into) Marketing messages."""
+	_assert_conversation_access(conversation_id)
+	from whatsnext.whatsnext.conversations import set_opt_out as _set
+
+	_set(conversation_id, bool(int(opted_out)), "Manual")
+	return get_conversation_info(conversation_id)
+
+
 def _create_message_record(**kwargs) -> "frappe.model.document.Document":
 	if not kwargs.get("customer"):
 		number = kwargs.get("to_number") or kwargs.get("from_number")
@@ -444,35 +569,107 @@ def _create_message_record(**kwargs) -> "frappe.model.document.Document":
 	return doc
 
 
+def _resolve_provider(provider: str | None) -> str | None:
+	"""Per-message provider choice. Empty means "use the default"; a named
+	provider must be enabled, so a stale UI choice fails clearly up front."""
+	provider = _clean_param(provider)
+	if not provider:
+		return None
+	settings = frappe.get_cached_doc("Whatsnext Settings")
+	if provider == "Meta" and not settings.meta_enabled:
+		frappe.throw("Meta Cloud API is not enabled in Whatsnext Settings.")
+	if provider == "Twilio" and not settings.twilio_enabled:
+		frappe.throw("Twilio is not enabled in Whatsnext Settings.")
+	if provider not in ("Meta", "Twilio"):
+		frappe.throw(f"Unknown provider '{provider}'.")
+	return provider
+
+
+def _parse_schedule(scheduled_time):
+	"""Returns a future datetime, or None to send now."""
+	from frappe.utils import get_datetime
+
+	scheduled_time = _clean_param(scheduled_time)
+	if not scheduled_time:
+		return None
+	when = get_datetime(scheduled_time)
+	if when <= now_datetime():
+		return None
+	return when
+
+
+def _assert_window_open(to: str, when=None):
+	"""WhatsApp only allows free-form (non-template) messages within 24 hours
+	of the customer's last message. Fail with a clear explanation instead of
+	letting the provider reject it with a cryptic error."""
+	from whatsnext.whatsnext.conversations import window_expires_at
+
+	expires = window_expires_at(to)
+	at = when or now_datetime()
+	if not expires or expires <= at:
+		if when:
+			frappe.throw(
+				"The 24-hour reply window will be closed at that time, so only a template can be sent then.",
+				title="Outside the 24-hour window",
+			)
+		frappe.throw(
+			"This customer hasn't messaged you in the last 24 hours, so WhatsApp only allows an approved "
+			"template message. Use the template button to send one.",
+			title="Outside the 24-hour window",
+		)
+
+
+def _render_body(body: str, params: dict) -> str:
+	"""Show the message as the customer received it, with {{n}} filled in."""
+	def sub(m):
+		value = params.get(m.group(1), params.get(int(m.group(1)) if m.group(1).isdigit() else m.group(1)))
+		return str(value) if value not in (None, "") else m.group(0)
+
+	return re.sub(r"\{\{(\d+)\}\}", sub, body or "")
+
+
 @frappe.whitelist()
 def send_message(to: str, message: str, provider: str | None = None,
-                  reference_doctype: str | None = None, reference_name: str | None = None):
+                  reference_doctype: str | None = None, reference_name: str | None = None,
+                  scheduled_time: str | None = None):
 	"""Send a free-form text message. Only valid inside a 24h customer service
-	window per WhatsApp policy — use send_template_message outside that window."""
+	window per WhatsApp policy — use send_template_message outside that window.
+	With a future scheduled_time the message is queued for the scheduler."""
 	to = normalize_outbound_number(to)
+	provider = _resolve_provider(provider)
+	when = _parse_schedule(scheduled_time)
+	_assert_window_open(to, when)
 	msg = _create_message_record(
 		type="Outgoing", provider=provider, status="Pending", to_number=to,
 		message=message, message_type="Manual", content_type="text",
-		reference_doctype=reference_doctype, reference_name=reference_name,
+		reference_doctype=_clean_param(reference_doctype), reference_name=_clean_param(reference_name),
+		scheduled_time=when,
 	)
-	_dispatch(msg)
+	if not when:
+		_dispatch(msg)
 	return msg.as_dict()
 
 
 @frappe.whitelist()
 def send_media_message(to: str, media_url: str, media_type: str, caption: str = "",
                         provider: str | None = None,
-                        reference_doctype: str | None = None, reference_name: str | None = None):
+                        reference_doctype: str | None = None, reference_name: str | None = None,
+                        scheduled_time: str | None = None):
 	"""Send a standalone image/video/document/audio message (composer
 	attach button) — as opposed to a header image that's part of a
 	Template send."""
 	to = normalize_outbound_number(to)
+	provider = _resolve_provider(provider)
+	when = _parse_schedule(scheduled_time)
+	_assert_window_open(to, when)
 	msg = _create_message_record(
 		type="Outgoing", provider=provider, status="Pending", to_number=to,
 		message=caption, message_type="Manual", content_type=media_type,
-		attach=media_url, reference_doctype=reference_doctype, reference_name=reference_name,
+		attach=media_url, reference_doctype=_clean_param(reference_doctype),
+		reference_name=_clean_param(reference_name), scheduled_time=when,
 	)
-	_dispatch(msg)
+	if not when:
+		_dispatch(msg)
 	return msg.as_dict()
 
 
@@ -480,15 +677,43 @@ def send_media_message(to: str, media_url: str, media_type: str, caption: str = 
 def send_template_message(to: str, template: str, parameters: str | dict | None = None,
                            provider: str | None = None,
                            reference_doctype: str | None = None, reference_name: str | None = None,
-                           header_media_url: str | None = None):
+                           header_media_url: str | None = None, scheduled_time: str | None = None,
+                           attach_print: int | bool = 0, print_format: str | None = None):
+	"""attach_print: render the referenced document's print format as a PDF
+	and send it as the Document header (used by the Desk WhatsApp button)."""
 	to = normalize_outbound_number(to)
 	tpl = frappe.get_doc("Whatsnext Message Template", template)
 	if isinstance(parameters, str):
 		parameters = json.loads(parameters) if parameters else {}
 	parameters = parameters or {}
+	header_media_url = _clean_param(header_media_url)
+
+	if int(attach_print or 0):
+		reference_doctype = _clean_param(reference_doctype)
+		reference_name = _clean_param(reference_name)
+		if not (reference_doctype and reference_name):
+			frappe.throw("Attaching a print needs the document it belongs to.")
+		if tpl.header_type != "Document":
+			frappe.throw(f"Template '{template}' doesn't have a Document header, so a PDF can't be attached.")
+		ref = frappe.get_doc(reference_doctype, reference_name)
+		ref.check_permission("print")
+		from whatsnext.whatsnext.notification_engine import _attach_document_pdf
+
+		header_media_url = _attach_document_pdf(frappe._dict(print_format=_clean_param(print_format)), ref)
 
 	if tpl.header_type not in (None, "", "None", "Text") and not header_media_url:
 		frappe.throw(f"Template '{template}' has a {tpl.header_type} header — a header_media_url is required to send it.")
+
+	from whatsnext.whatsnext.conversations import is_opted_out
+
+	if tpl.category == "Marketing" and is_opted_out(to):
+		frappe.throw(
+			f"{to} has opted out of promotional messages, so Marketing templates can't be sent to them.",
+			title="Opted out",
+		)
+
+	provider = _resolve_provider(provider) or (tpl.provider if tpl.provider in ("Meta", "Twilio") else None)
+	when = _parse_schedule(scheduled_time)
 
 	# Mirror the header media on our own record too, not just the outbound
 	# API payload — otherwise the chat UI has no way to show the image/
@@ -496,14 +721,26 @@ def send_template_message(to: str, template: str, parameters: str | dict | None 
 	content_type = (tpl.header_type or "text").lower() if header_media_url else "text"
 
 	msg = _create_message_record(
-		type="Outgoing", provider=provider or tpl.provider if tpl.provider != "Both" else provider,
-		status="Pending", to_number=to, message=tpl.body, message_type="Template",
+		type="Outgoing", provider=provider,
+		status="Pending", to_number=to, message=_render_body(tpl.body, parameters), message_type="Template",
 		content_type=content_type, attach=header_media_url,
 		template=template, template_parameters=json.dumps(parameters),
-		reference_doctype=reference_doctype, reference_name=reference_name,
+		reference_doctype=_clean_param(reference_doctype), reference_name=_clean_param(reference_name),
+		scheduled_time=when,
 	)
-	_dispatch(msg, template_doc=tpl, params=parameters, header_media_url=header_media_url)
+	if not when:
+		_dispatch(msg, template_doc=tpl, params=parameters, header_media_url=header_media_url)
 	return msg.as_dict()
+
+
+@frappe.whitelist()
+def cancel_scheduled_message(name: str):
+	msg = frappe.get_doc("Whatsnext Message", name)
+	msg.check_permission("write")
+	if msg.status != "Pending" or not msg.scheduled_time:
+		frappe.throw("Only scheduled messages that haven't been sent yet can be cancelled.")
+	frappe.delete_doc("Whatsnext Message", name, ignore_permissions=True)
+	return {"ok": True}
 
 
 def _dispatch(msg, template_doc=None, params=None, header_media_url=None):
@@ -586,16 +823,132 @@ def get_message_log(status: str | None = None, limit: int = 200, offset: int = 0
 @frappe.whitelist()
 def get_templates(provider: str | None = None, approved_only: bool = False):
 	filters = {}
+	provider = _clean_param(provider)
 	if provider:
 		filters["provider"] = ["in", [provider, "Both"]]
-	if int(approved_only):
+	if int(approved_only or 0):
 		filters["approval_status"] = "Approved"
-	return frappe.get_all(
+	templates = frappe.get_all(
 		"Whatsnext Message Template",
 		filters=filters,
-		fields=["name", "template_name", "provider", "language", "category", "approval_status", "body", "header_type", "header_text", "header_example_url", "footer_text", "twilio_content_sid", "meta_template_id"],
+		fields=["name", "template_name", "provider", "language", "category", "approval_status", "rejection_reason", "body", "header_type", "header_text", "header_example_url", "footer_text", "twilio_content_sid", "meta_template_id", "variables_sample"],
 		order_by="modified desc",
 	)
+	# Buttons are needed to ask for dynamic URL suffixes ({{1}}) at send time.
+	if templates:
+		buttons = frappe.get_all(
+			"Whatsnext Template Button",
+			filters={"parenttype": "Whatsnext Message Template", "parent": ["in", [t.name for t in templates]]},
+			fields=["parent", "idx", "button_type", "button_text", "button_value"],
+			order_by="idx asc",
+		)
+		by_parent = {}
+		for b in buttons:
+			by_parent.setdefault(b.parent, []).append(
+				{"index": b.idx - 1, "type": b.button_type, "text": b.button_text, "value": b.button_value}
+			)
+		for t in templates:
+			t["buttons"] = by_parent.get(t.name, [])
+	return templates
+
+
+@frappe.whitelist()
+def submit_template_to_meta(template: str):
+	"""Create the template in the connected WhatsApp Business Account and
+	record its review status. Previously templates made in the app only
+	existed locally and stayed "Draft" until someone recreated them by hand
+	in Business Manager."""
+	if "System Manager" not in frappe.get_roles(frappe.session.user):
+		frappe.throw("Only System Managers can submit templates to Meta.", frappe.PermissionError)
+
+	tpl = frappe.get_doc("Whatsnext Message Template", template)
+	if tpl.meta_template_id and tpl.approval_status in ("Approved", "Pending"):
+		frappe.throw(f"'{template}' is already on Meta ({tpl.approval_status}). Edit it first to submit changes.")
+
+	settings = frappe.get_cached_doc("Whatsnext Settings")
+	if not settings.meta_enabled or not settings.meta_waba_id:
+		frappe.throw("Enable Meta and set the WhatsApp Business Account ID in Whatsnext Settings first.")
+	provider = MetaProvider(settings)
+
+	samples = {}
+	if tpl.variables_sample:
+		try:
+			samples = json.loads(tpl.variables_sample) if isinstance(tpl.variables_sample, str) else tpl.variables_sample
+		except Exception:
+			samples = {}
+
+	components = []
+	header_type = tpl.header_type or "None"
+	if header_type == "Text" and tpl.header_text:
+		header = {"type": "HEADER", "format": "TEXT", "text": tpl.header_text}
+		if "{{1}}" in tpl.header_text:
+			header["example"] = {"header_text": [samples.get("header_1") or "Sample"]}
+		components.append(header)
+	elif header_type in ("Image", "Video", "Document"):
+		if not tpl.header_example_url:
+			frappe.throw(f"Add a sample {header_type.lower()} URL (Header Example URL) — Meta requires an example file for media headers.")
+		import requests
+
+		resp = requests.get(tpl.header_example_url, timeout=60)
+		if resp.status_code >= 400:
+			frappe.throw(f"Couldn't download the header example file (HTTP {resp.status_code}).")
+		mime = (resp.headers.get("Content-Type") or "application/octet-stream").split(";")[0]
+		try:
+			handle = provider.upload_example_media(resp.content, mime)
+		except WhatsAppSendError as e:
+			frappe.throw(str(e))
+		components.append({"type": "HEADER", "format": header_type.upper(), "example": {"header_handle": [handle]}})
+
+	body = {"type": "BODY", "text": tpl.body}
+	placeholders = sorted(set(re.findall(r"\{\{(\d+)\}\}", tpl.body or "")), key=int)
+	if placeholders:
+		examples = [str(samples.get(p) or f"sample{p}") for p in placeholders]
+		body["example"] = {"body_text": [examples]}
+	components.append(body)
+
+	if tpl.footer_text:
+		components.append({"type": "FOOTER", "text": tpl.footer_text})
+
+	if tpl.buttons:
+		buttons = []
+		for b in tpl.buttons:
+			if b.button_type == "URL":
+				btn = {"type": "URL", "text": b.button_text, "url": b.button_value}
+				if "{{1}}" in (b.button_value or ""):
+					btn["example"] = [(b.button_value or "").replace("{{1}}", "sample")]
+				buttons.append(btn)
+			elif b.button_type == "Phone Number":
+				buttons.append({"type": "PHONE_NUMBER", "text": b.button_text, "phone_number": b.button_value})
+			else:
+				buttons.append({"type": "QUICK_REPLY", "text": b.button_text})
+		components.append({"type": "BUTTONS", "buttons": buttons})
+
+	payload = {
+		"name": meta_template_name(tpl.template_name),
+		"language": tpl.language or "en",
+		"category": (tpl.category or "Utility").upper(),
+		"components": components,
+	}
+	try:
+		if tpl.meta_template_id:
+			# Already exists on Meta (edited after approval, or rejected):
+			# edit that template rather than creating a duplicate name.
+			result = provider.edit_template(tpl.meta_template_id, {
+				"category": payload["category"], "components": payload["components"],
+			})
+			result.setdefault("id", tpl.meta_template_id)
+			result.setdefault("status", "PENDING")
+		else:
+			result = provider.create_template(payload)
+	except WhatsAppSendError as e:
+		frappe.throw(f"Meta rejected the template: {e}")
+
+	tpl.db_set({
+		"meta_template_id": result.get("id"),
+		"approval_status": _map_meta_status(result.get("status") or "PENDING"),
+		"rejection_reason": "",
+	})
+	return {"meta_template_id": result.get("id"), "status": tpl.approval_status, "meta_name": payload["name"]}
 
 
 @frappe.whitelist()
@@ -679,7 +1032,8 @@ def delete_recipient_list(list_name: str):
 
 
 @frappe.whitelist()
-def create_campaign(campaign_name: str, template: str, recipients: str | list, provider: str | None = None):
+def create_campaign(campaign_name: str, template: str, recipients: str | list, provider: str | None = None,
+                    scheduled_time: str | None = None):
 	"""recipients: list of {"to_number": "...", "parameters": {...}} dicts,
 	or a JSON string of the same. Creates the Campaign in Draft and does NOT
 	send — call start_campaign separately so the frontend can show a
@@ -705,8 +1059,9 @@ def create_campaign(campaign_name: str, template: str, recipients: str | list, p
 		"doctype": "Whatsnext Campaign",
 		"campaign_name": campaign_name,
 		"template": template,
-		"provider": provider or None,
+		"provider": _resolve_provider(provider),
 		"status": "Draft",
+		"scheduled_time": _parse_schedule(scheduled_time),
 		"recipients": [
 			{
 				# Same normalization as one-off sends: raw CSV numbers like
@@ -725,25 +1080,77 @@ def create_campaign(campaign_name: str, template: str, recipients: str | list, p
 
 @frappe.whitelist()
 def start_campaign(campaign_name: str):
+	"""Sends now, or marks the campaign Scheduled when it has a future
+	scheduled_time (the scheduler starts it when due). Also resumes a paused
+	campaign: only recipients still Pending are sent."""
 	from whatsnext.whatsnext.campaign_engine import start_campaign as _start
 
+	frappe.get_doc("Whatsnext Campaign", campaign_name).check_permission("write")
+	status, scheduled_time = frappe.db.get_value("Whatsnext Campaign", campaign_name, ["status", "scheduled_time"])
 	# A double-click or a second tab used to enqueue a second send loop for
 	# the same campaign, messaging every pending recipient twice.
-	status = frappe.db.get_value("Whatsnext Campaign", campaign_name, "status")
 	if status in ("Queued", "Sending"):
 		frappe.throw(f"Campaign '{campaign_name}' is already {status.lower()}.")
+	if status == "Cancelled":
+		frappe.throw("This campaign was cancelled. Create a new one to send again.")
+
+	if scheduled_time and scheduled_time > now_datetime() and status in ("Draft", "Scheduled"):
+		frappe.db.set_value("Whatsnext Campaign", campaign_name, "status", "Scheduled")
+		return {"ok": True, "status": "Scheduled"}
 
 	frappe.db.set_value("Whatsnext Campaign", campaign_name, "status", "Queued")
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- explicit user action, needs to land before enqueue races the UI's next poll
 	_start(campaign_name)
+	return {"ok": True, "status": "Queued"}
+
+
+@frappe.whitelist()
+def pause_campaign(campaign_name: str):
+	frappe.get_doc("Whatsnext Campaign", campaign_name).check_permission("write")
+	status = frappe.db.get_value("Whatsnext Campaign", campaign_name, "status")
+	if status not in ("Queued", "Sending", "Scheduled"):
+		frappe.throw(f"A {status} campaign can't be paused.")
+	frappe.db.set_value("Whatsnext Campaign", campaign_name, "status", "Paused")
 	return {"ok": True}
+
+
+@frappe.whitelist()
+def cancel_campaign(campaign_name: str):
+	frappe.get_doc("Whatsnext Campaign", campaign_name).check_permission("write")
+	status = frappe.db.get_value("Whatsnext Campaign", campaign_name, "status")
+	if status in ("Completed", "Cancelled"):
+		frappe.throw(f"This campaign is already {status.lower()}.")
+	frappe.db.set_value("Whatsnext Campaign", campaign_name, "status", "Cancelled")
+	return {"ok": True}
+
+
+@frappe.whitelist()
+def retry_failed_campaign(campaign_name: str):
+	"""Re-sends to recipients that failed (opted-out/skipped ones stay
+	skipped)."""
+	doc = frappe.get_doc("Whatsnext Campaign", campaign_name)
+	doc.check_permission("write")
+	if doc.status in ("Queued", "Sending"):
+		frappe.throw("Wait for the current run to finish before retrying.")
+	if doc.status == "Cancelled":
+		frappe.throw("This campaign was cancelled.")
+	retried = 0
+	for row in doc.recipients:
+		if row.status == "Failed":
+			row.db_set({"status": "Pending", "error_message": ""}, update_modified=False)
+			retried += 1
+	if not retried:
+		frappe.throw("There are no failed recipients to retry.")
+	frappe.db.set_value("Whatsnext Campaign", campaign_name, "scheduled_time", None)
+	start_campaign(campaign_name)
+	return {"ok": True, "retried": retried}
 
 
 @frappe.whitelist()
 def list_campaigns():
 	return frappe.get_all(
 		"Whatsnext Campaign",
-		fields=["name", "campaign_name", "template", "status", "total_recipients", "sent_count", "delivered_count", "failed_count", "creation"],
+		fields=["name", "campaign_name", "template", "provider", "status", "scheduled_time", "total_recipients", "sent_count", "delivered_count", "failed_count", "skipped_count", "creation"],
 		order_by="creation desc",
 		limit_page_length=100,
 	)
@@ -761,6 +1168,9 @@ def get_campaign(campaign_name: str):
 		"sent_count": doc.sent_count,
 		"delivered_count": doc.delivered_count,
 		"failed_count": doc.failed_count,
+		"skipped_count": doc.skipped_count,
+		"scheduled_time": doc.scheduled_time,
+		"provider": doc.provider,
 		"recipients": [
 			{"to_number": r.to_number, "status": r.status, "error_message": r.error_message}
 			for r in doc.recipients
@@ -814,19 +1224,34 @@ def export_campaign_results(campaign_name: str, format: str = "xlsx"):
 		frappe.throw("format must be 'xlsx' or 'pdf'")
 
 
+def _customer_scope_sql():
+	customers = get_allowed_customers()
+	if customers is None:
+		return "1=1", {}
+	if not customers:
+		return "(customer IS NULL OR customer = '')", {}
+	return "(customer IN %(scope_customers)s OR customer IS NULL OR customer = '')", {"scope_customers": tuple(customers)}
+
+
 @frappe.whitelist()
 def dashboard_stats():
 	"""Powers the WhatsApp Hub dashboard: counts, delivery donut, weekly trend, top templates."""
 	today = getdate()
 	week_start = add_to_date(today, days=-6)
 
+	# Same customer scoping as the chat list: a Sales Person only sees
+	# figures and recent activity for their own customers' chats (plus
+	# unassigned ones), not company-wide numbers and other people's messages.
+	scope, scope_params = _customer_scope_sql()
+
 	counts = frappe.db.sql(
 		"""
 		SELECT status, COUNT(*) AS cnt
 		FROM `tabWhatsnext Message`
-		WHERE type = 'Outgoing'
+		WHERE type = 'Outgoing' AND """ + scope + """
 		GROUP BY status
 		""",
+		scope_params,
 		as_dict=True,
 	)
 	status_counts = {row.status: row.cnt for row in counts}
@@ -834,8 +1259,15 @@ def dashboard_stats():
 	# Delivery figures cover outgoing messages only: incoming messages are
 	# stored as Delivered/Read too, which inflated "delivered" and the
 	# delivery percentage with messages we never sent.
-	message_queue = frappe.db.count("Whatsnext Message", {"type": "Outgoing", "status": ["in", ["Pending", "Queued"]]})
-	scheduled_jobs = frappe.db.count("Whatsnext Message", {"type": "Outgoing", "scheduled_time": ["is", "set"], "status": ["in", ["Pending", "Queued"]]})
+	message_queue = frappe.db.sql(
+		"SELECT COUNT(*) FROM `tabWhatsnext Message` WHERE type='Outgoing' AND status IN ('Pending','Queued') AND " + scope,
+		scope_params,
+	)[0][0]
+	scheduled_jobs = frappe.db.sql(
+		"SELECT COUNT(*) FROM `tabWhatsnext Message` WHERE type='Outgoing' AND scheduled_time IS NOT NULL "
+		"AND status IN ('Pending','Queued') AND " + scope,
+		scope_params,
+	)[0][0]
 
 	delivered = status_counts.get("Delivered", 0) + status_counts.get("Read", 0)
 	failed = status_counts.get("Failed", 0)
@@ -849,11 +1281,11 @@ def dashboard_stats():
 			SUM(CASE WHEN type='Outgoing' THEN 1 ELSE 0 END) AS sent,
 			SUM(CASE WHEN type='Outgoing' AND status IN ('Delivered','Read') THEN 1 ELSE 0 END) AS delivered
 		FROM `tabWhatsnext Message`
-		WHERE DATE(creation) BETWEEN %(start)s AND %(end)s
+		WHERE DATE(creation) BETWEEN %(start)s AND %(end)s AND """ + scope + """
 		GROUP BY DATE(creation)
 		ORDER BY day ASC
 		""",
-		{"start": week_start, "end": today},
+		{"start": week_start, "end": today, **scope_params},
 		as_dict=True,
 	)
 	# One point per day for the whole week, zero-filled -- days with no
@@ -874,17 +1306,19 @@ def dashboard_stats():
 		"""
 		SELECT template, COUNT(*) AS cnt
 		FROM `tabWhatsnext Message`
-		WHERE template IS NOT NULL AND template != ''
+		WHERE template IS NOT NULL AND template != '' AND """ + scope + """
 		GROUP BY template
 		ORDER BY cnt DESC
 		LIMIT 5
 		""",
+		scope_params,
 		as_dict=True,
 	)
 
-	recent = frappe.get_all(
+	# get_list applies the doctype's permission query conditions.
+	recent = frappe.get_list(
 		"Whatsnext Message",
-		fields=["name", "to_number", "type", "status", "message", "template", "creation"],
+		fields=["name", "to_number", "from_number", "conversation_id", "type", "status", "message", "template", "creation"],
 		order_by="creation desc",
 		limit_page_length=8,
 	)
@@ -904,3 +1338,204 @@ def dashboard_stats():
 		"top_templates": top_templates,
 		"recent_messages": recent,
 	}
+
+
+# ---------------------------------------------------------------------------
+# Notifications (event-driven sends) — managed from the SPA, System Managers
+# ---------------------------------------------------------------------------
+
+def _require_system_manager():
+	if "System Manager" not in frappe.get_roles(frappe.session.user):
+		frappe.throw("Only System Managers can manage notifications.", frappe.PermissionError)
+
+
+NOTIFICATION_FIELDS = [
+	"notification_name", "enabled", "event", "reference_doctype", "recipient_number_field",
+	"fixed_number", "template", "provider", "attach_document_print", "print_format", "condition",
+]
+
+
+@frappe.whitelist()
+def list_notifications():
+	_require_system_manager()
+	return frappe.get_all(
+		"Whatsnext Notification",
+		fields=["name", "notification_name", "enabled", "event", "reference_doctype", "template", "last_polled", "modified"],
+		order_by="modified desc",
+	)
+
+
+@frappe.whitelist()
+def get_notification(name: str):
+	_require_system_manager()
+	doc = frappe.get_doc("Whatsnext Notification", name)
+	data = {f: doc.get(f) for f in NOTIFICATION_FIELDS}
+	data["name"] = doc.name
+	data["field_mapping"] = [
+		{"template_variable": r.template_variable, "source_fieldname": r.source_fieldname, "static_value": r.static_value}
+		for r in doc.field_mapping
+	]
+	return data
+
+
+@frappe.whitelist()
+def save_notification(data: str | dict):
+	"""Create or update a Whatsnext Notification (validate() still enforces
+	the realtime-vs-Scheduled and PDF-header rules)."""
+	_require_system_manager()
+	if isinstance(data, str):
+		data = json.loads(data)
+	name = data.get("name")
+	doc = frappe.get_doc("Whatsnext Notification", name) if name else frappe.new_doc("Whatsnext Notification")
+	for f in NOTIFICATION_FIELDS:
+		if f in data:
+			doc.set(f, data[f])
+	if name and data.get("notification_name") and data["notification_name"] != name:
+		frappe.throw("Renaming a notification isn't supported — create a new one instead.")
+	doc.set("field_mapping", [])
+	for row in data.get("field_mapping") or []:
+		if row.get("template_variable"):
+			doc.append("field_mapping", {
+				"template_variable": str(row["template_variable"]),
+				"source_fieldname": row.get("source_fieldname") or None,
+				"static_value": row.get("static_value") or None,
+			})
+	doc.save()
+	return get_notification(doc.name)
+
+
+@frappe.whitelist()
+def delete_notification(name: str):
+	_require_system_manager()
+	frappe.delete_doc("Whatsnext Notification", name)
+	return {"ok": True}
+
+
+@frappe.whitelist()
+def get_notification_options(doctype: str | None = None):
+	"""Doctypes with instant (realtime) events, and — for a chosen doctype —
+	its fields so the UI can offer pickers instead of free-typed names."""
+	_require_system_manager()
+	from whatsnext.hooks import WATCHED_DOCTYPES
+
+	result = {"watched_doctypes": [d for d in WATCHED_DOCTYPES if frappe.db.exists("DocType", d)]}
+	doctype = _clean_param(doctype)
+	if doctype:
+		meta = frappe.get_meta(doctype)
+		skip = {"Section Break", "Column Break", "Tab Break", "HTML", "Button", "Table", "Table MultiSelect", "Fold", "Heading", "Image"}
+		result["fields"] = [
+			{"fieldname": f.fieldname, "label": f.label or f.fieldname, "fieldtype": f.fieldtype}
+			for f in meta.fields if f.fieldtype not in skip
+		] + [{"fieldname": "name", "label": "ID (name)", "fieldtype": "Data"}]
+		result["is_submittable"] = bool(meta.is_submittable)
+		result["print_formats"] = frappe.get_all("Print Format", filters={"doc_type": doctype, "disabled": 0}, pluck="name")
+	return result
+
+
+@frappe.whitelist()
+def search_doctypes(txt: str = ""):
+	"""Any doctype can be watched with the Scheduled event."""
+	_require_system_manager()
+	return frappe.get_all(
+		"DocType",
+		filters={"istable": 0, "issingle": 0, "name": ["like", f"%{txt or ''}%"]},
+		pluck="name",
+		order_by="name asc",
+		limit_page_length=20,
+	)
+
+
+@frappe.whitelist()
+def get_document_whatsapp_context(doctype: str, name: str):
+	"""For the Desk "WhatsApp" button: the best number to message for this
+	document, plus print formats and the existing chat (if any)."""
+	doc = frappe.get_doc(doctype, name)
+	doc.check_permission("read")
+
+	number = None
+	for field in ("whatsapp_no", "whatsapp_number", "mobile_no", "contact_mobile", "mobile",
+	              "cell_number", "phone", "contact_phone", "phone_no"):
+		if doc.get(field):
+			number = doc.get(field)
+			break
+	if not number:
+		from whatsnext.whatsnext.notification_engine import _fallback_contact_mobile
+
+		number = _fallback_contact_mobile(doc)
+	if not number and doctype in ("Customer", "Supplier", "Lead"):
+		contact = frappe.db.get_value(
+			"Dynamic Link",
+			{"parenttype": "Contact", "link_doctype": doctype, "link_name": name},
+			"parent",
+		)
+		if contact:
+			number = frappe.db.get_value("Contact", contact, "mobile_no") or frappe.db.get_value("Contact", contact, "phone")
+
+	conversation_id = normalize_outbound_number(number) if number else None
+	return {
+		"number": number,
+		"conversation_id": conversation_id,
+		"has_chat": bool(conversation_id and frappe.db.exists("Whatsnext Conversation", conversation_id)),
+		"print_formats": frappe.get_all("Print Format", filters={"doc_type": doctype, "disabled": 0}, pluck="name"),
+		"default_print_format": frappe.get_meta(doctype).default_print_format,
+	}
+
+
+TEMPLATE_FIELDS = [
+	"provider", "language", "category", "header_type", "header_text", "header_example_url",
+	"body", "footer_text", "twilio_content_sid", "variables_sample",
+]
+
+
+@frappe.whitelist()
+def save_template(data: str | dict):
+	"""Create or update a template including its buttons in one save (the
+	page previously issued one set_value per field, which couldn't edit the
+	buttons table at all). Editing an Approved Meta template's content means
+	it must be re-reviewed, so the status drops back to Draft."""
+	if isinstance(data, str):
+		data = json.loads(data)
+	name = _clean_param(data.get("name"))
+	if name:
+		doc = frappe.get_doc("Whatsnext Message Template", name)
+		doc.check_permission("write")
+	else:
+		doc = frappe.new_doc("Whatsnext Message Template")
+		doc.template_name = (data.get("template_name") or "").strip()
+
+	content_fields = ("header_type", "header_text", "body", "footer_text")
+	content_changed = False
+	for f in TEMPLATE_FIELDS:
+		if f in data:
+			value = data[f]
+			if f == "variables_sample" and isinstance(value, dict):
+				value = json.dumps(value)
+			if f in content_fields and (doc.get(f) or "") != (value or ""):
+				content_changed = True
+			doc.set(f, value)
+
+	if "buttons" in data:
+		old = [(b.button_type, b.button_text, b.button_value or "") for b in doc.buttons]
+		doc.set("buttons", [])
+		for b in data.get("buttons") or []:
+			if b.get("button_text"):
+				doc.append("buttons", {
+					"button_type": b.get("button_type") or "Quick Reply",
+					"button_text": b["button_text"],
+					"button_value": b.get("button_value") or "",
+				})
+		new = [(b.button_type, b.button_text, b.button_value or "") for b in doc.buttons]
+		content_changed = content_changed or old != new
+
+	twilio_sid = data.get("twilio_content_sid")
+	if twilio_sid and not twilio_sid.startswith("HX"):
+		frappe.throw("A Twilio Content SID normally starts with 'HX'. Double-check you copied the Content SID, not the Template SID.")
+
+	if name and content_changed and doc.meta_template_id and doc.approval_status in ("Approved", "Rejected"):
+		# Meta's copy no longer matches; "Submit to Meta" now sends the edit
+		# to the existing template (same meta_template_id) for re-review.
+		doc.approval_status = "Draft"
+		doc.rejection_reason = None
+
+	doc.save()
+	return doc.as_dict()

@@ -79,7 +79,7 @@ const weeklyPoints = computed(() =>
         <h3>Recent Messages</h3>
         <ul class="wn-simple-list">
           <li v-for="m in dashboard.stats?.recent_messages || []" :key="m.name">
-            <span>{{ m.to_number }} — {{ m.template || (m.message || '').slice(0, 30) }}</span>
+            <span>{{ m.type === 'Incoming' ? (m.from_number || m.conversation_id) : m.to_number }} — {{ m.template || (m.message || '').slice(0, 30) }}</span>
             <span class="wn-status" :class="m.status?.toLowerCase()">{{ m.status }}</span>
           </li>
         </ul>

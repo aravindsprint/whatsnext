@@ -4,8 +4,14 @@ import { call } from '@/api/frappe'
 import { useCampaignsStore } from '@/stores/campaigns'
 import { useRecipientListsStore } from '@/stores/recipientLists'
 import { parseRecipientsCsv, recipientsToCsv } from '@/lib/csv'
+import { toFrappeDatetime } from '@/lib/templateVars'
+import { parseFrappeDate } from '@/lib/date'
+import { useAuthStore } from '@/stores/auth'
 
 const campaigns = useCampaignsStore()
+const auth = useAuthStore()
+const rowBusy = ref(null)
+const rowError = ref(null)
 const recipientLists = useRecipientListsStore()
 const showForm = ref(false)
 const templates = ref([])
@@ -18,10 +24,14 @@ const form = ref({
   campaign_name: '',
   template: '',
   csvText: '',
+  provider: '',
+  scheduleOn: false,
+  scheduleAt: '',
 })
 
 const parsedRecipients = computed(() => parseRecipientsCsv(form.value.csvText))
 const invalidRecipients = computed(() => parsedRecipients.value.filter((r) => !r.valid))
+const selectedTemplate = computed(() => templates.value.find((t) => t.name === form.value.template))
 
 async function loadTemplates() {
   templates.value = await call('whatsnext.whatsnext.api.get_templates', {}, 'GET')
@@ -40,7 +50,7 @@ async function onFileUpload(e) {
 }
 
 function openNew() {
-  form.value = { campaign_name: '', template: '', csvText: '' }
+  form.value = { campaign_name: '', template: '', csvText: '', provider: '', scheduleOn: false, scheduleAt: '' }
   error.value = null
   selectedList.value = ''
   showForm.value = true
@@ -63,9 +73,24 @@ async function launch() {
     error.value = `${invalidRecipients.value.length} recipient(s) have an invalid phone number — check the highlighted rows below.`
     return
   }
+  if (form.value.scheduleOn && !form.value.scheduleAt) {
+    error.value = 'Pick a date and time, or turn off scheduling.'
+    return
+  }
   launching.value = true
   try {
-    await campaigns.create(form.value.campaign_name, form.value.template, recipients)
+    try {
+      await campaigns.create(form.value.campaign_name, form.value.template, recipients, {
+        provider: form.value.provider || undefined,
+        scheduledTime: form.value.scheduleOn ? toFrappeDatetime(form.value.scheduleAt) : undefined,
+      })
+    } catch (e) {
+      // A previous attempt may have created the campaign and then failed to
+      // start it; launching again should start that draft, not error out.
+      const existing = (e.message || '').includes('DuplicateEntryError')
+        && campaigns.campaigns.find((c) => c.name === form.value.campaign_name && c.status === 'Draft')
+      if (!existing) throw e
+    }
     await campaigns.start(form.value.campaign_name)
     showForm.value = false
     await campaigns.load()
@@ -85,7 +110,7 @@ function startPolling() {
   if (pollTimer) return
   pollTimer = setInterval(async () => {
     await campaigns.load()
-    const stillRunning = campaigns.campaigns.some((c) => c.status === 'Queued' || c.status === 'Sending')
+    const stillRunning = campaigns.campaigns.some((c) => ['Queued', 'Sending', 'Scheduled'].includes(c.status))
     if (!stillRunning) {
       clearInterval(pollTimer)
       pollTimer = null
@@ -95,7 +120,7 @@ function startPolling() {
 
 onMounted(async () => {
   await campaigns.load()
-  const running = campaigns.campaigns.some((c) => c.status === 'Queued' || c.status === 'Sending')
+  const running = campaigns.campaigns.some((c) => ['Queued', 'Sending', 'Scheduled'].includes(c.status))
   if (running) startPolling()
 })
 
@@ -109,9 +134,28 @@ function downloadResults(campaignName, format) {
 }
 const openDownloadMenu = ref(null)
 
+function processed(c) {
+  return (c.sent_count || 0) + (c.failed_count || 0) + (c.skipped_count || 0)
+}
+
 function progressPct(c) {
   if (!c.total_recipients) return 0
-  return Math.round(((c.sent_count + c.failed_count) / c.total_recipients) * 100)
+  return Math.round((processed(c) / c.total_recipients) * 100)
+}
+
+async function rowAction(c, action) {
+  if (action === 'cancel' && !confirm(`Cancel campaign "${c.campaign_name}"? Recipients not yet messaged won't be sent.`)) return
+  rowBusy.value = c.name
+  rowError.value = null
+  try {
+    await campaigns[action](c.name)
+    await campaigns.load()
+    startPolling()
+  } catch (e) {
+    rowError.value = e.message
+  } finally {
+    rowBusy.value = null
+  }
 }
 </script>
 
@@ -131,22 +175,35 @@ function progressPct(c) {
             <th>Status</th>
             <th>Progress</th>
             <th>Sent</th>
+            <th>Delivered</th>
             <th>Failed</th>
-            <th>Results</th>
+            <th>Skipped</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="c in campaigns.campaigns" :key="c.name">
             <td>{{ c.campaign_name }}</td>
             <td>{{ c.template }}</td>
-            <td><span class="wn-status" :class="c.status.toLowerCase()">{{ c.status }}</span></td>
+            <td>
+              <span class="wn-status" :class="(c.status || '').toLowerCase()">{{ c.status }}</span>
+              <div v-if="c.status === 'Scheduled' && c.scheduled_time" class="wn-muted-small">{{ parseFrappeDate(c.scheduled_time).toLocaleString() }}</div>
+            </td>
             <td class="wn-progress-cell">
               <div class="wn-progress-bar"><div class="wn-progress-fill" :style="{ width: progressPct(c) + '%' }"></div></div>
-              <span class="wn-progress-label">{{ c.sent_count + c.failed_count }}/{{ c.total_recipients }}</span>
+              <span class="wn-progress-label">{{ processed(c) }}/{{ c.total_recipients }}</span>
             </td>
             <td>{{ c.sent_count }}</td>
+            <td>{{ c.delivered_count || 0 }}</td>
             <td>{{ c.failed_count }}</td>
+            <td>{{ c.skipped_count || 0 }}</td>
             <td class="wn-download-cell">
+              <div class="wn-row-actions">
+                <button v-if="['Queued','Sending','Scheduled'].includes(c.status)" class="ghost small" :disabled="rowBusy === c.name" @click="rowAction(c, 'pause')">Pause</button>
+                <button v-if="['Paused','Draft'].includes(c.status)" class="ghost small" :disabled="rowBusy === c.name" @click="rowAction(c, 'start')">{{ c.status === 'Paused' ? 'Resume' : 'Start' }}</button>
+                <button v-if="c.failed_count && ['Completed','Failed','Paused'].includes(c.status)" class="ghost small" :disabled="rowBusy === c.name" @click="rowAction(c, 'retryFailed')">Retry failed</button>
+                <button v-if="!['Completed','Cancelled'].includes(c.status)" class="ghost small danger" :disabled="rowBusy === c.name" @click="rowAction(c, 'cancel')">Cancel</button>
+              </div>
               <div class="wn-download-menu">
                 <button class="ghost small" @click="openDownloadMenu = openDownloadMenu === c.name ? null : c.name">Download ▾</button>
                 <div v-if="openDownloadMenu === c.name" class="wn-download-options" @mouseleave="openDownloadMenu = null">
@@ -157,10 +214,11 @@ function progressPct(c) {
             </td>
           </tr>
           <tr v-if="!campaigns.loading && !campaigns.campaigns.length">
-            <td colspan="7" class="wn-muted">No campaigns yet.</td>
+            <td colspan="9" class="wn-muted">No campaigns yet.</td>
           </tr>
         </tbody>
       </table>
+      <p v-if="rowError" class="wn-error">{{ rowError }}</p>
     </div>
 
     <div v-if="showForm" class="wn-modal-backdrop" @click.self="showForm = false">
@@ -173,13 +231,28 @@ function progressPct(c) {
         <label>Template</label>
         <select v-model="form.template">
           <option value="" disabled>Select a template</option>
-          <option v-for="t in templates" :key="t.name" :value="t.name">{{ t.template_name }} ({{ t.provider }})</option>
+          <option v-for="t in templates" :key="t.name" :value="t.name">{{ t.template_name }} ({{ t.provider }}{{ t.approval_status !== 'Approved' ? ' · ' + t.approval_status : '' }})</option>
         </select>
+        <p v-if="selectedTemplate?.category === 'Marketing'" class="wn-muted-small">
+          Marketing template — numbers that opted out are skipped automatically.
+        </p>
+
+        <template v-if="auth.providers.length > 1">
+          <label>Send via</label>
+          <select v-model="form.provider">
+            <option value="">Default ({{ auth.defaultProvider }})</option>
+            <option v-for="p in auth.providers" :key="p" :value="p">{{ p }}</option>
+          </select>
+        </template>
+
+        <label class="wn-check"><input v-model="form.scheduleOn" type="checkbox" /> Schedule for later</label>
+        <input v-if="form.scheduleOn" v-model="form.scheduleAt" type="datetime-local" />
 
         <label>
           Recipients — paste CSV or upload a file. First column is the phone number;
           optional header row starting with "phone" or "to"; remaining columns fill
-          <code v-pre>{{1}}</code>, <code v-pre>{{2}}</code>… in order.
+          <code v-pre>{{1}}</code>, <code v-pre>{{2}}</code>… in order (or name header columns
+          <code>1</code>, <code>2</code>, <code>header_1</code>, <code>button_0</code> to target them).
         </label>
         <div class="wn-load-list-row">
           <select v-model="selectedList" @change="loadFromList">
@@ -210,7 +283,7 @@ function progressPct(c) {
 
         <div class="wn-modal-actions">
           <button class="ghost" @click="showForm = false">Cancel</button>
-          <button class="primary" :disabled="launching || invalidRecipients.length > 0" @click="launch">{{ launching ? 'Launching…' : 'Launch Campaign' }}</button>
+          <button class="primary" :disabled="launching || invalidRecipients.length > 0" @click="launch">{{ launching ? 'Launching…' : (form.scheduleOn ? 'Schedule Campaign' : 'Launch Campaign') }}</button>
         </div>
       </div>
     </div>
@@ -263,4 +336,11 @@ button.ghost.small { padding: 6px 10px; font-size: 12px; border-radius: 8px; }
 .wn-load-list-row { margin-bottom: 8px; }
 .wn-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 .wn-error { color: var(--wn-red); font-size: 12.5px; margin-top: 10px; }
+.wn-row-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.wn-muted-small { font-size: 11px; color: var(--wn-text-muted); margin-top: 2px; }
+.wn-check { display: flex !important; align-items: center; gap: 6px; }
+.wn-check input { width: auto !important; }
+.wn-status.scheduled, .wn-status.paused { background: #e0e7ff; color: #3730a3; }
+.wn-status.cancelled { background: var(--wn-bg); color: var(--wn-text-muted); }
+.wn-card { overflow-x: auto; }
 </style>

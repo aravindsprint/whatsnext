@@ -6,6 +6,7 @@ import { pushSupported, pushPermission, enablePush, disablePush, getExistingSubs
 
 const auth = useAuthStore()
 const settings = ref(null)
+const original = ref(null)
 const loading = ref(true)
 const saving = ref(false)
 const saved = ref(false)
@@ -55,10 +56,11 @@ async function load() {
     // Frappe returns Check fields as "0"/"1" strings (or 0/1 numbers)
     // depending on version — coerce to real booleans so the checkbox
     // v-models actually reflect the stored value after every load.
-    for (const f of ['notify_on_failure', 'meta_enabled', 'twilio_enabled', 'push_notifications_enabled']) {
+    for (const f of ['notify_on_failure', 'meta_enabled', 'twilio_enabled', 'push_notifications_enabled', 'twilio_verify_signature', 'opt_out_enabled']) {
       res[f] = res[f] === true || res[f] === 1 || res[f] === '1'
     }
     settings.value = res
+    original.value = { ...res }
   } catch (e) {
     error.value = e.message
   } finally {
@@ -79,15 +81,18 @@ async function save() {
     const fields = [
       'default_provider', 'notify_on_failure', 'failure_notification_email', 'default_country_code',
       'meta_phone_number_id', 'meta_waba_id', 'meta_app_id', 'meta_api_version',
-      'meta_access_token', 'meta_webhook_verify_token',
-      'twilio_account_sid', 'twilio_whatsapp_number', 'twilio_auth_token',
+      'meta_access_token', 'meta_webhook_verify_token', 'meta_app_secret',
+      'twilio_account_sid', 'twilio_whatsapp_number', 'twilio_auth_token', 'twilio_verify_signature',
       'vapid_subject', 'push_notifications_enabled',
+      'opt_out_enabled', 'opt_out_keywords', 'opt_in_keywords', 'opt_out_confirmation', 'opt_in_confirmation',
       'meta_enabled', 'twilio_enabled',
     ]
     for (const f of fields) {
       // skip masked password placeholders so we never overwrite a saved
       // token with the '***' placeholder the API returns
-      if ((f === 'meta_access_token' || f === 'twilio_auth_token') && /^\*+$/.test(settings.value[f] || '')) continue
+      if (['meta_access_token', 'twilio_auth_token', 'meta_app_secret'].includes(f) && /^\*+$/.test(settings.value[f] || '')) continue
+      // Unchanged fields don't need a save round-trip each.
+      if (original.value && original.value[f] === settings.value[f]) continue
       await call('frappe.client.set_value', {
         doctype: 'Whatsnext Settings',
         name: 'Whatsnext Settings',
@@ -96,6 +101,8 @@ async function save() {
       })
     }
     saved.value = true
+    original.value = { ...settings.value }
+    auth.loadWhoAmI()  // enabled providers may have changed
   } catch (e) {
     error.value = e.message
   } finally {
@@ -204,7 +211,13 @@ async function testConnection(provider) {
       <input v-model="settings.meta_access_token" type="password" placeholder="Leave unchanged to keep existing token" />
       <label>Webhook Verify Token</label>
       <input v-model="settings.meta_webhook_verify_token" />
-      <p class="wn-hint">Webhook URL: <code>/api/method/whatsnext.whatsnext.api.webhook.meta_webhook</code></p>
+      <label>App Secret <span class="wn-hint-inline">— verifies that webhooks really come from Meta</span></label>
+      <input v-model="settings.meta_app_secret" type="password" placeholder="Meta App Dashboard → App settings → Basic" />
+      <p class="wn-hint">
+        Webhook URL: <code>/api/method/whatsnext.whatsnext.api.webhook.meta_webhook</code> —
+        subscribe to <code>messages</code> and <code>message_template_status_update</code>.
+        Without an App Secret, anyone who knows this URL can post fake messages.
+      </p>
 
       <div class="wn-test-row">
         <button class="secondary" :disabled="testing.Meta" @click="testConnection('Meta')">
@@ -240,6 +253,10 @@ async function testConnection(provider) {
         Inbound webhook: <code>/api/method/whatsnext.whatsnext.api.webhook.twilio_webhook</code><br />
         Status callback: <code>/api/method/whatsnext.whatsnext.api.webhook.twilio_status_callback</code>
       </p>
+      <label class="wn-checkbox">
+        <input type="checkbox" v-model="settings.twilio_verify_signature" />
+        Verify Twilio webhook signatures (turn on once the URLs in Twilio exactly match this site's public address)
+      </label>
 
       <div class="wn-test-row">
         <button class="secondary" :disabled="testing.Twilio" @click="testConnection('Twilio')">
@@ -252,6 +269,33 @@ async function testConnection(provider) {
           ✗ {{ testResult.Twilio.error }}
         </span>
       </div>
+    </div>
+
+    <div class="wn-card">
+      <div class="wn-card-top">
+        <h3>Opt-out (STOP / START)</h3>
+        <label class="wn-checkbox"><input type="checkbox" v-model="settings.opt_out_enabled" /> Enabled</label>
+      </div>
+      <p class="wn-hint">
+        Customers who reply with an opt-out keyword stop receiving Marketing templates and campaigns
+        (utility messages like invoices still go out). They get the confirmation below automatically.
+      </p>
+      <template v-if="settings.opt_out_enabled">
+        <div class="wn-row">
+          <div>
+            <label>Opt-out keywords (one per line)</label>
+            <textarea v-model="settings.opt_out_keywords" rows="3"></textarea>
+          </div>
+          <div>
+            <label>Opt-in keywords (one per line)</label>
+            <textarea v-model="settings.opt_in_keywords" rows="3"></textarea>
+          </div>
+        </div>
+        <label>Opt-out confirmation reply</label>
+        <textarea v-model="settings.opt_out_confirmation" rows="2"></textarea>
+        <label>Opt-in confirmation reply</label>
+        <textarea v-model="settings.opt_in_confirmation" rows="2"></textarea>
+      </template>
     </div>
 
     <p v-if="error" class="wn-error">{{ error }}</p>
@@ -281,4 +325,6 @@ button.secondary { background: var(--wn-bg); color: var(--wn-text, #333); border
 .wn-success { color: var(--wn-teal); font-size: 13px; }
 .wn-forbidden { color: var(--wn-text-muted); }
 .wn-muted { color: var(--wn-text-muted); }
+.wn-hint-inline { font-weight: 400; color: var(--wn-text-muted); }
+textarea { width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--wn-border); font-size: 13px; font-family: inherit; box-sizing: border-box; }
 </style>

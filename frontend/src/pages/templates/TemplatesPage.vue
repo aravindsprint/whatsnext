@@ -1,6 +1,12 @@
 <script setup>
 import { onMounted, ref, computed } from 'vue'
 import { call } from '@/api/frappe'
+import { useAuthStore } from '@/stores/auth'
+import { templateInputs } from '@/lib/templateVars'
+
+const auth = useAuthStore()
+const submitting = ref(null)
+const submitResult = ref(null)
 
 const templates = ref([])
 const search = ref('')
@@ -27,13 +33,46 @@ const blank = () => ({
   category: 'Utility',
   header_type: 'None',
   header_text: '',
+  header_example_url: '',
   body: '',
   footer_text: '',
   twilio_content_sid: '',
+  buttons: [],
+  samples: {},
 })
 const form = ref(blank())
 
 const needsTwilioSid = computed(() => ['Twilio', 'Both'].includes(form.value.provider))
+// Example values Meta requires at review time for every {{n}} (and a text
+// header's {{1}}); stored in variables_sample.
+const sampleInputs = computed(() =>
+  templateInputs({ ...form.value, buttons: [] }).map((i) => ({ ...i, label: i.label.replace('Variable', 'Example for') }))
+)
+function parseSamples(v) {
+  try { return typeof v === 'string' ? JSON.parse(v || '{}') : (v || {}) } catch { return {} }
+}
+function addButton() {
+  form.value.buttons.push({ button_type: 'Quick Reply', button_text: '', button_value: '' })
+}
+function canSubmitToMeta(t) {
+  return auth.isSystemManager && auth.providers.includes('Meta') && ['Meta', 'Both'].includes(t.provider)
+    && (!t.meta_template_id || ['Draft', 'Rejected'].includes(t.approval_status))
+}
+async function submitToMeta(t) {
+  submitting.value = t.name
+  submitResult.value = null
+  error.value = null
+  try {
+    const res = await call('whatsnext.whatsnext.api.submit_template_to_meta', { template: t.name })
+    submitResult.value = `"${t.template_name}" submitted to Meta as ${res.meta_name} — status: ${res.status}.`
+    await load()
+  } catch (e) {
+    submitResult.value = null
+    error.value = e.message
+  } finally {
+    submitting.value = null
+  }
+}
 
 async function load() {
   loading.value = true
@@ -62,9 +101,12 @@ function openEdit(t) {
     category: t.category,
     header_type: t.header_type || 'None',
     header_text: t.header_text || '',
+    header_example_url: t.header_example_url || '',
     body: t.body,
     footer_text: t.footer_text || '',
     twilio_content_sid: t.twilio_content_sid || '',
+    buttons: (t.buttons || []).map((b) => ({ button_type: b.type, button_text: b.text, button_value: b.value || '' })),
+    samples: parseSamples(t.variables_sample),
   }
   error.value = null
   showForm.value = true
@@ -74,31 +116,15 @@ async function save() {
   saving.value = true
   error.value = null
   try {
-    if (editingName.value) {
-      const fields = ['provider', 'language', 'category', 'header_type', 'header_text', 'body', 'footer_text']
-      for (const f of fields) {
-        await call('frappe.client.set_value', {
-          doctype: 'Whatsnext Message Template',
-          name: editingName.value,
-          fieldname: f,
-          value: form.value[f],
-        })
-      }
-      await call('whatsnext.whatsnext.api.update_template_provider_ids', {
-        template: editingName.value,
-        twilio_content_sid: form.value.twilio_content_sid,
-      })
-    } else {
-      await call('frappe.client.insert', {
-        doc: { doctype: 'Whatsnext Message Template', ...form.value },
-      })
-      if (form.value.twilio_content_sid) {
-        await call('whatsnext.whatsnext.api.update_template_provider_ids', {
-          template: form.value.template_name,
-          twilio_content_sid: form.value.twilio_content_sid,
-        })
-      }
-    }
+    const { samples, ...fields } = form.value
+    const keys = new Set(sampleInputs.value.map((i) => i.key))
+    await call('whatsnext.whatsnext.api.save_template', {
+      data: {
+        ...fields,
+        name: editingName.value || undefined,
+        variables_sample: Object.fromEntries(Object.entries(samples || {}).filter(([k]) => keys.has(k))),
+      },
+    })
     showForm.value = false
     await load()
   } catch (e) {
@@ -138,6 +164,8 @@ function statusTone(status) {
         <button class="primary" @click="openNew">+ New Template</button>
       </div>
     </div>
+    <p v-if="submitResult" class="wn-sync-result">{{ submitResult }}</p>
+    <p v-if="error && !showForm" class="wn-error">{{ error }}</p>
     <p v-if="syncResult" class="wn-sync-result">
       Synced from Meta: {{ syncResult.created }} new, {{ syncResult.updated }} updated ({{ syncResult.total_fetched }} total on Meta).
     </p>
@@ -159,6 +187,10 @@ function statusTone(status) {
             Twilio SID: {{ t.twilio_content_sid || 'not set' }}
           </span>
         </div>
+        <p v-if="t.approval_status === 'Rejected' && t.rejection_reason" class="wn-reject">Rejected: {{ t.rejection_reason }}</p>
+        <button v-if="canSubmitToMeta(t)" class="ghost small" :disabled="submitting === t.name" @click.stop="submitToMeta(t)">
+          {{ submitting === t.name ? 'Submitting…' : (t.meta_template_id ? 'Resubmit to Meta' : 'Submit to Meta') }}
+        </button>
       </div>
       <p v-if="!loading && !templates.length" class="wn-muted">No templates yet — create your first one.</p>
     </div>
@@ -192,11 +224,53 @@ function statusTone(status) {
           </div>
         </div>
 
+        <div class="wn-flex">
+          <div>
+            <label>Header</label>
+            <select v-model="form.header_type">
+              <option>None</option>
+              <option>Text</option>
+              <option>Image</option>
+              <option>Video</option>
+              <option>Document</option>
+            </select>
+          </div>
+          <div v-if="form.header_type === 'Text'" class="wn-grow">
+            <label>Header text (may use <code v-pre>{{1}}</code>)</label>
+            <input v-model="form.header_text" />
+          </div>
+          <div v-else-if="form.header_type !== 'None'" class="wn-grow">
+            <label>Example {{ form.header_type.toLowerCase() }} URL (sent for review, and the default at send time)</label>
+            <input v-model="form.header_example_url" placeholder="https://example.com/sample.jpg" />
+          </div>
+        </div>
+
         <label>Body — use <code v-pre>{{1}}</code>, <code v-pre>{{2}}</code> for variables</label>
         <textarea v-model="form.body" rows="4" placeholder="Hi {1}, your order {2} has shipped."></textarea>
 
+        <template v-if="sampleInputs.length">
+          <label>Example values (Meta requires one per variable for review)</label>
+          <div class="wn-flex wn-wrap">
+            <input v-for="i in sampleInputs" :key="i.key" v-model="form.samples[i.key]" :placeholder="i.label" />
+          </div>
+        </template>
+
         <label>Footer (optional)</label>
         <input v-model="form.footer_text" />
+
+        <label>Buttons (optional)</label>
+        <div v-for="(b, idx) in form.buttons" :key="idx" class="wn-flex wn-btn-row">
+          <select v-model="b.button_type">
+            <option>Quick Reply</option>
+            <option>URL</option>
+            <option>Phone Number</option>
+          </select>
+          <input v-model="b.button_text" placeholder="Button text" />
+          <input v-if="b.button_type !== 'Quick Reply'" v-model="b.button_value"
+                 :placeholder="b.button_type === 'URL' ? 'https://example.com/track/{{1}}' : '+919876543210'" />
+          <button class="ghost small danger" type="button" @click="form.buttons.splice(idx, 1)">✕</button>
+        </div>
+        <button v-if="form.buttons.length < 10" class="ghost small" type="button" @click="addButton">+ Add button</button>
 
         <template v-if="needsTwilioSid">
           <label>
@@ -206,9 +280,9 @@ function statusTone(status) {
           <input v-model="form.twilio_content_sid" placeholder="HXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
         </template>
 
-        <p v-if="editingName && ['Meta','Both'].includes(form.provider)" class="wn-hint">
-          Meta Template ID is populated automatically by the nightly approval-status sync once this
-          template exists in WhatsApp Business Manager with a matching name — it isn't set here.
+        <p v-if="['Meta','Both'].includes(form.provider)" class="wn-hint">
+          After saving, use “Submit to Meta” on the template card to send it for review. Changing an
+          approved template's text sets it back to Draft until you resubmit.
         </p>
 
         <p v-if="error" class="wn-error">{{ error }}</p>
@@ -255,4 +329,13 @@ button.ghost { background: white; border: 1px solid var(--wn-border); padding: 1
 .wn-hint { font-size: 11.5px; color: var(--wn-text-muted); margin-top: 10px; line-height: 1.5; }
 .wn-modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
 .wn-error { color: var(--wn-red); font-size: 12.5px; }
+.wn-flex { display: flex; gap: 10px; }
+.wn-flex > * { min-width: 0; }
+.wn-grow { flex: 2; }
+.wn-wrap > input { flex: 1 1 140px; }
+.wn-wrap { flex-wrap: wrap; }
+.wn-btn-row { align-items: center; margin-bottom: 6px; }
+.wn-btn-row select { flex: 0 0 130px; }
+.wn-reject { font-size: 12px; color: var(--wn-red); margin: 6px 0; }
+.wn-error { color: var(--wn-red); font-size: 13px; }
 </style>

@@ -19,6 +19,9 @@ const links = [
   { to: '/whatsnext/recipients', label: 'Recipients', icon: '👥' },
   { to: '/whatsnext/messages', label: 'Message Logs', icon: '🗒️' },
 ]
+const adminLinks = [
+  { to: '/whatsnext/notifications', label: 'Notifications', icon: '⚡' },
+]
 </script>
 
 <template>
@@ -36,6 +39,12 @@ const links = [
         <span class="wn-nav-icon">{{ l.icon }}</span>
         <span v-if="!collapsed">{{ l.label }}</span>
       </router-link>
+      <template v-if="auth.isSystemManager">
+        <router-link v-for="l in adminLinks" :key="l.to" :to="l.to" class="wn-nav-link" active-class="active" :title="l.label">
+          <span class="wn-nav-icon">{{ l.icon }}</span>
+          <span v-if="!collapsed">{{ l.label }}</span>
+        </router-link>
+      </template>
       <router-link to="/whatsnext/settings" class="wn-nav-link" active-class="active" title="Settings">
         <span class="wn-nav-icon">⚙️</span>
         <span v-if="!collapsed">Settings</span>

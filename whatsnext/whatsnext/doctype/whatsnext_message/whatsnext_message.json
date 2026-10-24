@@ -16,6 +16,7 @@
   "from_number",
   "profile_name",
   "customer",
+  "contact",
   "section_content",
   "message",
   "message_type",
@@ -89,6 +90,13 @@
    "in_standard_filter": 1,
    "read_only": 1,
    "description": "Auto-resolved from the WhatsApp number via the linked Contact. Used to scope chat visibility by assigned Sales Person."
+  },
+  {
+   "fieldname": "contact",
+   "fieldtype": "Link",
+   "options": "Contact",
+   "label": "Contact",
+   "read_only": 1
   },
   {
    "fieldname": "section_content",

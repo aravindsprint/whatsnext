@@ -4,6 +4,10 @@ import { parseFrappeDate } from '@/lib/date'
 
 const emit = defineEmits(['select'])
 
+function initials(user) {
+  return (user || '').split('@')[0].split(/[._-]/).filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join('')
+}
+
 function formatTime(value) {
   const d = parseFrappeDate(value)
   if (isNaN(d)) return ''
@@ -31,6 +35,7 @@ function formatTime(value) {
         </div>
         <div class="wn-conv-preview">
           <span>{{ c.message || '📎 Media' }}</span>
+          <span v-if="c.assigned_to" class="wn-assignee" :title="'Assigned to ' + c.assigned_to">{{ initials(c.assigned_to) }}</span>
           <span v-if="c.is_unread" class="wn-unread-dot"></span>
         </div>
       </div>
@@ -57,4 +62,5 @@ function formatTime(value) {
 .wn-conv-item.unread .wn-conv-preview span:first-child { color: var(--wn-text, #222); font-weight: 600; }
 .wn-unread-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--wn-teal); flex-shrink: 0; }
 .wn-empty { padding: 24px; text-align: center; color: var(--wn-text-muted); font-size: 13px; }
+.wn-assignee { font-size: 9.5px; font-weight: 700; background: var(--wn-teal-light); color: #0f8c72; border-radius: 999px; padding: 1px 5px; flex-shrink: 0; }
 </style>
