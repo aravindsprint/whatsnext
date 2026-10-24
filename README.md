@@ -18,6 +18,9 @@ Most WhatsApp-for-ERPNext tools stop at "send a templated message when X happens
 - **Schedule** a message or template for later; scheduled items can be cancelled from the chat
 - Pick **Meta or Twilio per message** (when both are enabled), or use the default
 - Incoming text, images, video, audio, documents, stickers, locations, shared contacts, reactions and **template quick-reply button taps**
+- **Quick replies** — shared saved answers, inserted with ⚡ or by typing `/shortcut`; `{name}` fills the customer's first name
+- **Read receipts** — customers see blue ticks when an agent opens the chat (Meta)
+- **Away message** — automatic reply outside business hours / on holidays, at most once per cooldown
 - Load earlier messages, Media & Files panel, offline-friendly chat list (IndexedDB), installable PWA, push notifications
 
 **Templates**
@@ -56,7 +59,7 @@ folder conventions, auth/CSRF pattern, and deploy checklist.
    - Inbound: `https://<your-site>/api/method/whatsnext.whatsnext.api.webhook.twilio_webhook`
    - Status callback: `https://<your-site>/api/method/whatsnext.whatsnext.api.webhook.twilio_status_callback`
    - Once these work, turn on **Verify Twilio Webhook Signatures**.
-5. Give agents the **Whatsnext User** role. To scope what they see, link their Employee to a Sales Person and add that Sales Person to customers' Sales Team.
+5. Give agents the **Whatsnext User** role — every Whatsnext API call requires it (or System Manager), so portal/website users can't reach the WhatsApp features. To scope what they see, link their Employee to a Sales Person and add that Sales Person to customers' Sales Team.
 6. Review the **Opt-out** keywords and confirmation messages.
 
 After updating the app run `bench --site <site> migrate` and restart workers.

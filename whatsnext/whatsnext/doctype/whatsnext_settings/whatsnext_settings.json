@@ -20,6 +20,7 @@
   "meta_access_token",
   "meta_webhook_verify_token",
   "meta_app_secret",
+  "send_read_receipts",
   "section_twilio",
   "twilio_enabled",
   "twilio_account_sid",
@@ -39,7 +40,16 @@
   "opt_in_keywords",
   "column_opt_out_1",
   "opt_out_confirmation",
-  "opt_in_confirmation"
+  "opt_in_confirmation",
+  "section_away",
+  "away_enabled",
+  "business_days",
+  "business_hours_start",
+  "business_hours_end",
+  "column_away_1",
+  "holiday_list",
+  "away_message",
+  "away_cooldown_hours"
  ],
  "fields": [
   {
@@ -119,6 +129,13 @@
    "fieldtype": "Password",
    "label": "App Secret (verifies webhook signatures)",
    "description": "From Meta App Dashboard → App settings → Basic. When set, incoming webhooks without a valid X-Hub-Signature-256 are rejected."
+  },
+  {
+   "fieldname": "send_read_receipts",
+   "fieldtype": "Check",
+   "label": "Send Read Receipts (blue ticks)",
+   "default": "1",
+   "description": "When an agent opens a chat, tell WhatsApp the customer's messages were read."
   },
   {
    "fieldname": "section_twilio",
@@ -235,6 +252,66 @@
    "label": "Opt-in Confirmation Reply",
    "default": "You are subscribed again. Reply STOP to unsubscribe at any time.",
    "depends_on": "opt_out_enabled"
+  },
+  {
+   "fieldname": "section_away",
+   "fieldtype": "Section Break",
+   "label": "Away Message (outside business hours)"
+  },
+  {
+   "fieldname": "away_enabled",
+   "fieldtype": "Check",
+   "label": "Send Away Message",
+   "default": "0"
+  },
+  {
+   "fieldname": "business_days",
+   "fieldtype": "Data",
+   "label": "Business Days",
+   "default": "Mon,Tue,Wed,Thu,Fri,Sat",
+   "depends_on": "away_enabled",
+   "description": "Comma-separated: Mon,Tue,Wed,Thu,Fri,Sat,Sun"
+  },
+  {
+   "fieldname": "business_hours_start",
+   "fieldtype": "Time",
+   "label": "Opens At",
+   "default": "09:00:00",
+   "depends_on": "away_enabled"
+  },
+  {
+   "fieldname": "business_hours_end",
+   "fieldtype": "Time",
+   "label": "Closes At",
+   "default": "18:00:00",
+   "depends_on": "away_enabled"
+  },
+  {
+   "fieldname": "column_away_1",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "holiday_list",
+   "fieldtype": "Link",
+   "options": "Holiday List",
+   "label": "Holiday List",
+   "depends_on": "away_enabled",
+   "description": "Optional — holidays in this list count as closed all day."
+  },
+  {
+   "fieldname": "away_message",
+   "fieldtype": "Small Text",
+   "label": "Away Message",
+   "default": "Thanks for your message! We're closed right now and will reply when we're back during business hours.",
+   "depends_on": "away_enabled"
+  },
+  {
+   "fieldname": "away_cooldown_hours",
+   "fieldtype": "Int",
+   "label": "Don't Repeat Within (hours)",
+   "default": "12",
+   "depends_on": "away_enabled",
+   "description": "A customer who keeps writing gets the away message at most once in this period."
   }
  ],
  "permissions": [

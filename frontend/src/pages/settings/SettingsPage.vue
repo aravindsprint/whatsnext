@@ -1,11 +1,19 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { call } from '@/api/frappe'
 import { useAuthStore } from '@/stores/auth'
+import QuickRepliesManager from '@/components/QuickRepliesManager.vue'
 import { pushSupported, pushPermission, enablePush, disablePush, getExistingSubscription } from '@/push'
 
 const auth = useAuthStore()
 const settings = ref(null)
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+const selectedDays = computed(() => (settings.value?.business_days || '').split(',').map((d) => d.trim()).filter(Boolean))
+function toggleDay(d) {
+  const set = new Set(selectedDays.value)
+  set.has(d) ? set.delete(d) : set.add(d)
+  settings.value.business_days = DAYS.filter((x) => set.has(x)).join(',')
+}
 const original = ref(null)
 const loading = ref(true)
 const saving = ref(false)
@@ -56,7 +64,7 @@ async function load() {
     // Frappe returns Check fields as "0"/"1" strings (or 0/1 numbers)
     // depending on version — coerce to real booleans so the checkbox
     // v-models actually reflect the stored value after every load.
-    for (const f of ['notify_on_failure', 'meta_enabled', 'twilio_enabled', 'push_notifications_enabled', 'twilio_verify_signature', 'opt_out_enabled']) {
+    for (const f of ['notify_on_failure', 'meta_enabled', 'twilio_enabled', 'push_notifications_enabled', 'twilio_verify_signature', 'opt_out_enabled', 'send_read_receipts', 'away_enabled']) {
       res[f] = res[f] === true || res[f] === 1 || res[f] === '1'
     }
     settings.value = res
@@ -85,6 +93,8 @@ async function save() {
       'twilio_account_sid', 'twilio_whatsapp_number', 'twilio_auth_token', 'twilio_verify_signature',
       'vapid_subject', 'push_notifications_enabled',
       'opt_out_enabled', 'opt_out_keywords', 'opt_in_keywords', 'opt_out_confirmation', 'opt_in_confirmation',
+      'send_read_receipts', 'business_days', 'business_hours_start', 'business_hours_end', 'holiday_list',
+      'away_message', 'away_cooldown_hours', 'away_enabled',
       'meta_enabled', 'twilio_enabled',
     ]
     for (const f of fields) {
@@ -148,6 +158,8 @@ async function testConnection(provider) {
         <p v-if="notifError" class="wn-error">{{ notifError }}</p>
       </template>
     </div>
+
+    <QuickRepliesManager />
 
     <div v-if="!auth.isSystemManager" class="wn-card wn-forbidden">
       The rest of Settings is restricted to System Managers.
@@ -213,6 +225,7 @@ async function testConnection(provider) {
       <input v-model="settings.meta_webhook_verify_token" />
       <label>App Secret <span class="wn-hint-inline">— verifies that webhooks really come from Meta</span></label>
       <input v-model="settings.meta_app_secret" type="password" placeholder="Meta App Dashboard → App settings → Basic" />
+      <label class="wn-checkbox"><input type="checkbox" v-model="settings.send_read_receipts" /> Send read receipts (customers see blue ticks when an agent opens the chat)</label>
       <p class="wn-hint">
         Webhook URL: <code>/api/method/whatsnext.whatsnext.api.webhook.meta_webhook</code> —
         subscribe to <code>messages</code> and <code>message_template_status_update</code>.
@@ -298,6 +311,44 @@ async function testConnection(provider) {
       </template>
     </div>
 
+    <div class="wn-card">
+      <div class="wn-card-top">
+        <h3>Away Message</h3>
+        <label class="wn-checkbox"><input type="checkbox" v-model="settings.away_enabled" /> Enabled</label>
+      </div>
+      <p class="wn-hint">Automatically reply to customers who write outside business hours (at most once per cooldown period).</p>
+      <template v-if="settings.away_enabled">
+        <label>Business days</label>
+        <div class="wn-days">
+          <label v-for="d in DAYS" :key="d" class="wn-checkbox">
+            <input type="checkbox" :checked="selectedDays.includes(d)" @change="toggleDay(d)" /> {{ d }}
+          </label>
+        </div>
+        <div class="wn-row">
+          <div>
+            <label>Opens at</label>
+            <input v-model="settings.business_hours_start" type="time" step="60" />
+          </div>
+          <div>
+            <label>Closes at</label>
+            <input v-model="settings.business_hours_end" type="time" step="60" />
+          </div>
+        </div>
+        <div class="wn-row">
+          <div>
+            <label>Holiday List (optional)</label>
+            <input v-model="settings.holiday_list" placeholder="Name of an ERPNext Holiday List" />
+          </div>
+          <div>
+            <label>Don't repeat within (hours)</label>
+            <input v-model.number="settings.away_cooldown_hours" type="number" min="1" />
+          </div>
+        </div>
+        <label>Message</label>
+        <textarea v-model="settings.away_message" rows="3"></textarea>
+      </template>
+    </div>
+
     <p v-if="error" class="wn-error">{{ error }}</p>
     <p v-if="saved" class="wn-success">Settings saved.</p>
 
@@ -327,4 +378,5 @@ button.secondary { background: var(--wn-bg); color: var(--wn-text, #333); border
 .wn-muted { color: var(--wn-text-muted); }
 .wn-hint-inline { font-weight: 400; color: var(--wn-text-muted); }
 textarea { width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--wn-border); font-size: 13px; font-family: inherit; box-sizing: border-box; }
+.wn-days { display: flex; flex-wrap: wrap; gap: 10px; }
 </style>

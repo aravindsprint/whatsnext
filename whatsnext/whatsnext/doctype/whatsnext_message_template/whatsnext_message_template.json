@@ -13,6 +13,7 @@
   "approval_status",
   "column_1",
   "meta_template_id",
+  "meta_name",
   "rejection_reason",
   "twilio_content_sid",
   "section_content",
@@ -76,6 +77,13 @@
    "fieldtype": "Data",
    "label": "Meta Template ID",
    "read_only": 1
+  },
+  {
+   "fieldname": "meta_name",
+   "fieldtype": "Data",
+   "label": "Name on Meta",
+   "read_only": 1,
+   "description": "The template's exact name in WhatsApp Business Manager (used when sending). Differs from the template name here when the same template exists in several languages."
   },
   {
    "fieldname": "rejection_reason",

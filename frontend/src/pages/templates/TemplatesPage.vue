@@ -169,6 +169,9 @@ function statusTone(status) {
     <p v-if="syncResult" class="wn-sync-result">
       Synced from Meta: {{ syncResult.created }} new, {{ syncResult.updated }} updated ({{ syncResult.total_fetched }} total on Meta).
     </p>
+    <p v-if="syncResult?.errors?.length" class="wn-error">
+      {{ syncResult.errors.length }} couldn't be synced: {{ syncResult.errors.join('; ') }}
+    </p>
 
     <div class="wn-template-grid">
       <p v-if="!filteredTemplates.length" class="wn-muted">No templates match your search.</p>
@@ -177,7 +180,7 @@ function statusTone(status) {
           <strong>{{ t.template_name }}</strong>
           <span class="wn-status" :class="statusTone(t.approval_status)">{{ t.approval_status }}</span>
         </div>
-        <div class="wn-template-meta">{{ t.provider }} · {{ t.language }} · {{ t.category }}</div>
+        <div class="wn-template-meta">{{ t.provider }} · {{ t.language }} · {{ t.category }}<span v-if="t.meta_name && t.meta_name !== t.template_name"> · on Meta as {{ t.meta_name }}</span></div>
         <p class="wn-template-body">{{ t.body }}</p>
         <div class="wn-template-ids">
           <span v-if="['Meta','Both'].includes(t.provider)" :class="{ 'wn-id-missing': !t.meta_template_id }">

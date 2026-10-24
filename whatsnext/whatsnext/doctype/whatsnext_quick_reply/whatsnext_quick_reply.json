@@ -1,0 +1,22 @@
+{
+ "doctype": "DocType",
+ "name": "Whatsnext Quick Reply",
+ "module": "Whatsnext",
+ "custom": 0,
+ "engine": "InnoDB",
+ "autoname": "field:title",
+ "title_field": "title",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "description": "Saved answers agents can insert into a chat. Type / and the shortcut in the composer.",
+ "field_order": ["title", "shortcut", "message"],
+ "fields": [
+  {"fieldname": "title", "fieldtype": "Data", "label": "Title", "reqd": 1, "unique": 1, "in_list_view": 1},
+  {"fieldname": "shortcut", "fieldtype": "Data", "label": "Shortcut", "in_list_view": 1, "description": "Optional, e.g. thanks — typed as /thanks in the composer"},
+  {"fieldname": "message", "fieldtype": "Small Text", "label": "Message", "reqd": 1, "in_list_view": 1, "description": "{name} is replaced with the customer's name."}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1},
+  {"role": "Whatsnext User", "read": 1, "write": 1, "create": 1, "delete": 1}
+ ]
+}

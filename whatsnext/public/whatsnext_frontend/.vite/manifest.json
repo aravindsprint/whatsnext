@@ -1,6 +1,6 @@
 {
-  "_csv-C1xUliOf.js": {
-    "file": "assets/csv-C1xUliOf.js",
+  "_csv-keZC42fb.js": {
+    "file": "assets/csv-keZC42fb.js",
     "name": "csv",
     "imports": [
       "index.html"
@@ -15,7 +15,7 @@
     "name": "templateVars"
   },
   "index.html": {
-    "file": "assets/index-nCViAzyI.js",
+    "file": "assets/index-Ba6nUApL.js",
     "name": "index",
     "src": "index.html",
     "isEntry": true,
@@ -32,11 +32,11 @@
       "src/pages/about/AboutPage.vue"
     ],
     "css": [
-      "assets/index-BJN3uru-.css"
+      "assets/index-C34UjY_T.css"
     ]
   },
   "src/pages/about/AboutPage.vue": {
-    "file": "assets/AboutPage-DF5p6qgJ.js",
+    "file": "assets/AboutPage-CasWJbCS.js",
     "name": "AboutPage",
     "src": "src/pages/about/AboutPage.vue",
     "isDynamicEntry": true,
@@ -48,13 +48,13 @@
     ]
   },
   "src/pages/campaigns/CampaignsPage.vue": {
-    "file": "assets/CampaignsPage-zCw7XclV.js",
+    "file": "assets/CampaignsPage-CIVpxfye.js",
     "name": "CampaignsPage",
     "src": "src/pages/campaigns/CampaignsPage.vue",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_csv-C1xUliOf.js",
+      "_csv-keZC42fb.js",
       "_templateVars-C5DWzWa1.js",
       "_date-DWWLIY5R.js"
     ],
@@ -63,7 +63,7 @@
     ]
   },
   "src/pages/dashboard/DashboardPage.vue": {
-    "file": "assets/DashboardPage-CF_HaW1y.js",
+    "file": "assets/DashboardPage-BtCsP14F.js",
     "name": "DashboardPage",
     "src": "src/pages/dashboard/DashboardPage.vue",
     "isDynamicEntry": true,
@@ -76,7 +76,7 @@
     ]
   },
   "src/pages/home/HomePage.vue": {
-    "file": "assets/HomePage-C7Oeyb3M.js",
+    "file": "assets/HomePage-DUJNVwhD.js",
     "name": "HomePage",
     "src": "src/pages/home/HomePage.vue",
     "isDynamicEntry": true,
@@ -86,11 +86,11 @@
       "_templateVars-C5DWzWa1.js"
     ],
     "css": [
-      "assets/HomePage-CLxcp40S.css"
+      "assets/HomePage-Db_XnT0W.css"
     ]
   },
   "src/pages/login/LoginPage.vue": {
-    "file": "assets/LoginPage-Bm4tMznP.js",
+    "file": "assets/LoginPage-D0CLy4Gh.js",
     "name": "LoginPage",
     "src": "src/pages/login/LoginPage.vue",
     "isDynamicEntry": true,
@@ -102,7 +102,7 @@
     ]
   },
   "src/pages/message-log/MessageLogPage.vue": {
-    "file": "assets/MessageLogPage-CMhx4TiM.js",
+    "file": "assets/MessageLogPage-BID6P3zj.js",
     "name": "MessageLogPage",
     "src": "src/pages/message-log/MessageLogPage.vue",
     "isDynamicEntry": true,
@@ -115,7 +115,7 @@
     ]
   },
   "src/pages/notifications/NotificationsPage.vue": {
-    "file": "assets/NotificationsPage-DTG0uFMn.js",
+    "file": "assets/NotificationsPage-CCn8LGlC.js",
     "name": "NotificationsPage",
     "src": "src/pages/notifications/NotificationsPage.vue",
     "isDynamicEntry": true,
@@ -128,20 +128,20 @@
     ]
   },
   "src/pages/recipients/RecipientsPage.vue": {
-    "file": "assets/RecipientsPage-DHt3rlBq.js",
+    "file": "assets/RecipientsPage-RG5vOkAC.js",
     "name": "RecipientsPage",
     "src": "src/pages/recipients/RecipientsPage.vue",
     "isDynamicEntry": true,
     "imports": [
       "index.html",
-      "_csv-C1xUliOf.js"
+      "_csv-keZC42fb.js"
     ],
     "css": [
       "assets/RecipientsPage-MRJ-xd5u.css"
     ]
   },
   "src/pages/settings/SettingsPage.vue": {
-    "file": "assets/SettingsPage-shwhM34m.js",
+    "file": "assets/SettingsPage-x_FX4915.js",
     "name": "SettingsPage",
     "src": "src/pages/settings/SettingsPage.vue",
     "isDynamicEntry": true,
@@ -149,11 +149,11 @@
       "index.html"
     ],
     "css": [
-      "assets/SettingsPage-BrQMeZ6i.css"
+      "assets/SettingsPage-BtJJ9ZOa.css"
     ]
   },
   "src/pages/templates/TemplatesPage.vue": {
-    "file": "assets/TemplatesPage-DT5ngaze.js",
+    "file": "assets/TemplatesPage-CNJeT2ji.js",
     "name": "TemplatesPage",
     "src": "src/pages/templates/TemplatesPage.vue",
     "isDynamicEntry": true,
@@ -162,7 +162,7 @@
       "_templateVars-C5DWzWa1.js"
     ],
     "css": [
-      "assets/TemplatesPage-C2ys5Opy.css"
+      "assets/TemplatesPage-BVoCos6Y.css"
     ]
   }
 }

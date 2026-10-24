@@ -1,6 +1,7 @@
 import frappe
 
 from whatsnext.whatsnext.push_engine import get_vapid_keys
+from whatsnext.whatsnext.permissions import require_app_user as _require_app_user
 
 
 @frappe.whitelist()
@@ -8,6 +9,7 @@ def get_vapid_public_key():
 	"""Public key only -- the private key never leaves the server. Returns
 	None while push is switched off so the frontend knows not to prompt for
 	notification permission at all."""
+	_require_app_user()
 	settings = frappe.get_cached_doc("Whatsnext Settings")
 	if not settings.push_notifications_enabled:
 		return None
@@ -21,6 +23,7 @@ def save_push_subscription(subscription):
 	(browser restart, permission re-grant, etc.) updates the existing row's
 	keys instead of accumulating duplicates that would each receive their
 	own push attempt."""
+	_require_app_user()
 	if isinstance(subscription, str):
 		import json
 
@@ -61,6 +64,7 @@ def save_push_subscription(subscription):
 def remove_push_subscription(endpoint):
 	"""Called when the frontend unsubscribes (user turns notifications off,
 	or the browser reports the subscription as no longer valid)."""
+	_require_app_user()
 	name = frappe.db.get_value(
 		"Whatsnext Push Subscription",
 		{"user": frappe.session.user, "endpoint": endpoint},
