@@ -8,6 +8,7 @@ from frappe.utils import now_datetime, add_to_date, getdate
 from whatsnext.whatsnext.provider_engine import get_provider, WhatsAppSendError, MetaProvider, meta_template_name
 from whatsnext.whatsnext.contacts import resolve_customer_from_phone, normalize_outbound_number
 from whatsnext.whatsnext.permissions import get_allowed_customers
+from whatsnext.whatsnext.permissions import is_app_user, require_app_user as _require_app_user
 
 MESSAGE_FIELDS = [
 	"name", "type", "provider", "status", "to_number", "from_number", "profile_name",
@@ -49,6 +50,7 @@ def whoami():
 		"full_name": frappe.utils.get_fullname(frappe.session.user),
 		"roles": roles,
 		"is_system_manager": "System Manager" in roles,
+		"has_access": is_app_user(),
 		"providers": providers,
 		"default_provider": settings.default_provider,
 		"opt_out_enabled": bool(settings.opt_out_enabled),
@@ -83,6 +85,7 @@ def sync_templates_from_meta():
 	Whatsnext Message Template records for any that don't already exist
 	here (matched by meta_template_id, falling back to name+language).
 	Existing local templates just get their approval status refreshed."""
+	_require_app_user()
 	if "System Manager" not in frappe.get_roles(frappe.session.user):
 		frappe.throw("Only System Managers can sync templates.", frappe.PermissionError)
 
@@ -92,85 +95,110 @@ def sync_templates_from_meta():
 
 	remote_templates = MetaProvider(settings).fetch_templates()
 
-	created, updated = 0, 0
+	created, updated, errors = 0, 0, []
 
 	for t in remote_templates:
-		meta_id = t.get("id")
-		name = t.get("name")
-		language = t.get("language")
-
-		existing = frappe.db.get_value("Whatsnext Message Template", {"meta_template_id": meta_id}, "name")
-		if not existing:
-			existing = frappe.db.get_value(
-				"Whatsnext Message Template",
-				{"template_name": name, "language": language},
-				"name",
-			)
-
-		header_text = ""
-		header_type = ""
-		header_example_url = ""
-		footer_text = ""
-		body = ""
-		buttons = []
-		for comp in t.get("components", []):
-			ctype = (comp.get("type") or "").upper()
-			if ctype == "HEADER":
-				header_type = (comp.get("format") or "Text").title()
-				# Only these exist as Header Type options; anything else
-				# (e.g. LOCATION headers) failed Select validation and
-				# aborted the whole sync on that one template.
-				if header_type not in ("Text", "Image", "Document", "Video"):
-					header_type = "None"
-				if header_type == "Text":
-					header_text = comp.get("text", "")
-				else:
-					handles = comp.get("example", {}).get("header_handle", [])
-					if handles:
-						header_example_url = handles[0]
-			elif ctype == "BODY":
-				body = comp.get("text", "")
-			elif ctype == "FOOTER":
-				footer_text = comp.get("text", "")
-			elif ctype == "BUTTONS":
-				for b in comp.get("buttons", []):
-					buttons.append({
-						"button_type": _map_button_type(b.get("type")),
-						"button_text": b.get("text", ""),
-						"button_value": b.get("url") or b.get("phone_number") or "",
-					})
-
-		if existing:
-			doc = frappe.get_doc("Whatsnext Message Template", existing)
-			doc.approval_status = _map_meta_status(t.get("status"))
-			doc.meta_template_id = meta_id
-			if header_example_url:
-				doc.header_example_url = header_example_url
-			doc.save(ignore_permissions=True)
-			updated += 1
+		# One bad template (e.g. an unexpected format) used to abort the
+		# whole sync, leaving every later template unsynced.
+		try:
+			result = _sync_one_meta_template(t)
+		except Exception as e:
+			frappe.db.rollback()
+			frappe.log_error(frappe.get_traceback(), f"Whatsnext: couldn't sync Meta template {t.get('name')}")
+			errors.append(f"{t.get('name')} ({t.get('language')}): {e}")
 			continue
+		if result == "created":
+			created += 1
+		else:
+			updated += 1
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- explicit user-triggered sync; keep each template that succeeded
 
-		doc = frappe.get_doc({
-			"doctype": "Whatsnext Message Template",
-			"template_name": name,
-			"provider": "Meta",
-			"language": language,
-			"category": _map_meta_category(t.get("category")),
-			"approval_status": _map_meta_status(t.get("status")),
-			"meta_template_id": meta_id,
-			"header_type": header_type or None,
-			"header_text": header_text,
-			"header_example_url": header_example_url,
-			"body": body,
-			"footer_text": footer_text,
-			"buttons": buttons,
-		})
-		doc.insert(ignore_permissions=True)
-		created += 1
+	return {"created": created, "updated": updated, "total_fetched": len(remote_templates), "errors": errors}
 
-	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- explicit user-triggered sync action
 
-	return {"created": created, "updated": updated, "total_fetched": len(remote_templates)}
+def _sync_one_meta_template(t):
+	meta_id = t.get("id")
+	name = t.get("name")
+	language = t.get("language")
+
+	existing = frappe.db.get_value("Whatsnext Message Template", {"meta_template_id": meta_id}, "name")
+	if not existing:
+		existing = frappe.db.get_value(
+			"Whatsnext Message Template", {"meta_name": name, "language": language}, "name"
+		) or frappe.db.get_value(
+			"Whatsnext Message Template", {"template_name": name, "language": language}, "name"
+		)
+
+	header_text = ""
+	header_type = ""
+	header_example_url = ""
+	footer_text = ""
+	body = ""
+	buttons = []
+	for comp in t.get("components", []):
+		ctype = (comp.get("type") or "").upper()
+		if ctype == "HEADER":
+			header_type = (comp.get("format") or "Text").title()
+			# Only these exist as Header Type options; anything else
+			# (e.g. LOCATION headers) failed Select validation and
+			# aborted the whole sync on that one template.
+			if header_type not in ("Text", "Image", "Document", "Video"):
+				header_type = "None"
+			if header_type == "Text":
+				header_text = comp.get("text", "")
+			else:
+				handles = comp.get("example", {}).get("header_handle", [])
+				if handles:
+					header_example_url = handles[0]
+		elif ctype == "BODY":
+			body = comp.get("text", "")
+		elif ctype == "FOOTER":
+			footer_text = comp.get("text", "")
+		elif ctype == "BUTTONS":
+			for b in comp.get("buttons", []):
+				buttons.append({
+					"button_type": _map_button_type(b.get("type")),
+					"button_text": b.get("text", ""),
+					"button_value": b.get("url") or b.get("phone_number") or "",
+				})
+
+	if existing:
+		doc = frappe.get_doc("Whatsnext Message Template", existing)
+		doc.approval_status = _map_meta_status(t.get("status"))
+		doc.meta_template_id = meta_id
+		doc.meta_name = name
+		if header_example_url:
+			doc.header_example_url = header_example_url
+		doc.save(ignore_permissions=True)
+		return "updated"
+
+	# Template names are unique here, but Meta keys templates by name AND
+	# language — the same template in English and Tamil is two templates.
+	# The second language used to fail the insert (and abort the sync); it
+	# now gets a language-suffixed local name, and meta_name keeps the real
+	# name for sending.
+	local_name = name
+	if frappe.db.exists("Whatsnext Message Template", local_name):
+		local_name = f"{name}_{language}"
+
+	doc = frappe.get_doc({
+		"doctype": "Whatsnext Message Template",
+		"template_name": local_name,
+		"meta_name": name,
+		"provider": "Meta",
+		"language": language,
+		"category": _map_meta_category(t.get("category")),
+		"approval_status": _map_meta_status(t.get("status")),
+		"meta_template_id": meta_id,
+		"header_type": header_type or None,
+		"header_text": header_text,
+		"header_example_url": header_example_url,
+		"body": body,
+		"footer_text": footer_text,
+		"buttons": buttons,
+	})
+	doc.insert(ignore_permissions=True)
+	return "created"
 
 
 @frappe.whitelist()
@@ -179,6 +207,7 @@ def get_selectable_contacts(search: str = None):
 	assigned to the logged-in user's Sales Person record(s) (System
 	Managers see all). Returns one row per Contact with its first known
 	phone number and the Customer it's linked to."""
+	_require_app_user()
 	customers = get_allowed_customers()
 	if customers is not None and not customers:
 		return []
@@ -223,6 +252,7 @@ def get_selectable_contacts(search: str = None):
 def test_provider_connection(provider: str):
 	"""Verify saved credentials for the given provider ('Meta' or 'Twilio')
 	actually work, without sending a real WhatsApp message."""
+	_require_app_user()
 	if "System Manager" not in frappe.get_roles(frappe.session.user):
 		frappe.throw("Only System Managers can test provider connections.", frappe.PermissionError)
 
@@ -275,6 +305,7 @@ def get_conversations(limit: int = 100, offset: int = 0, search: str = None, fil
 	logged-in user's assigned customers unless System Manager/Admin.
 	filter: None/'all', 'unread', 'mine', 'closed', 'incoming', 'outgoing'.
 	'all' and the others hide Closed chats; 'closed' shows only those."""
+	_require_app_user()
 	limit = int(limit)
 	offset = int(offset)
 	filter = _clean_param(filter)
@@ -408,6 +439,7 @@ def _assert_conversation_access(conversation_id: str):
 def get_conversation_media(conversation_id: str):
 	"""All messages in a conversation that carry an attachment, grouped by
 	kind, for the Media & Files side panel."""
+	_require_app_user()
 	_assert_conversation_access(conversation_id)
 
 	rows = frappe.get_all(
@@ -433,6 +465,7 @@ def get_conversation_media(conversation_id: str):
 def get_conversation_stats():
 	"""Counts for the Chats header bar, respecting the same customer
 	permission scope as get_conversations (unfiltered by search)."""
+	_require_app_user()
 	where, params = _conversation_scope_where()
 
 	total = frappe.db.sql(
@@ -452,6 +485,7 @@ def get_conversation_stats():
 
 @frappe.whitelist()
 def get_messages(conversation_id: str, limit: int = 100, offset: int = 0):
+	_require_app_user()
 	_assert_conversation_access(conversation_id)
 
 	# Newest `limit` messages, returned oldest-first for display. Ordering
@@ -475,7 +509,24 @@ def get_messages(conversation_id: str, limit: int = 100, offset: int = 0):
 
 @frappe.whitelist()
 def mark_as_read(conversation_id: str):
+	_require_app_user()
 	_assert_conversation_access(conversation_id)
+	# Blue ticks for the customer: one receipt for the newest unread Meta
+	# message marks everything before it as read too.
+	latest_unread = frappe.db.get_value(
+		"Whatsnext Message",
+		{"conversation_id": conversation_id, "type": "Incoming", "status": "Delivered", "provider": "Meta"},
+		"provider_message_id",
+		order_by="creation desc",
+	)
+	if latest_unread and frappe.get_cached_doc("Whatsnext Settings").send_read_receipts:
+		frappe.enqueue(
+			"whatsnext.whatsnext.conversations.send_read_receipt",
+			queue="short",
+			enqueue_after_commit=True,
+			message_id=latest_unread,
+		)
+
 	# Only unread (Delivered) messages: re-stamping every incoming message in
 	# the thread bumped their `modified` on each open for no reason.
 	frappe.db.set_value(
@@ -491,6 +542,7 @@ def mark_as_read(conversation_id: str):
 @frappe.whitelist()
 def get_conversation_info(conversation_id: str):
 	"""Everything the chat header/side panel needs about one thread."""
+	_require_app_user()
 	_assert_conversation_access(conversation_id)
 	from whatsnext.whatsnext.conversations import is_opted_out, window_expires_at
 
@@ -531,6 +583,7 @@ def _ensure_conversation(conversation_id: str):
 
 @frappe.whitelist()
 def assign_conversation(conversation_id: str, user: str | None = None):
+	_require_app_user()
 	_assert_conversation_access(conversation_id)
 	user = _clean_param(user)
 	if user and not frappe.db.exists("User", {"name": user, "enabled": 1}):
@@ -542,6 +595,7 @@ def assign_conversation(conversation_id: str, user: str | None = None):
 
 @frappe.whitelist()
 def set_conversation_status(conversation_id: str, status: str):
+	_require_app_user()
 	_assert_conversation_access(conversation_id)
 	if status not in ("Open", "Closed"):
 		frappe.throw("Status must be Open or Closed.")
@@ -553,6 +607,7 @@ def set_conversation_status(conversation_id: str, status: str):
 @frappe.whitelist()
 def set_opt_out(conversation_id: str, opted_out: int | bool):
 	"""Manually opt a number out of (or back into) Marketing messages."""
+	_require_app_user()
 	_assert_conversation_access(conversation_id)
 	from whatsnext.whatsnext.conversations import set_opt_out as _set
 
@@ -635,6 +690,7 @@ def send_message(to: str, message: str, provider: str | None = None,
 	"""Send a free-form text message. Only valid inside a 24h customer service
 	window per WhatsApp policy — use send_template_message outside that window.
 	With a future scheduled_time the message is queued for the scheduler."""
+	_require_app_user()
 	to = normalize_outbound_number(to)
 	provider = _resolve_provider(provider)
 	when = _parse_schedule(scheduled_time)
@@ -658,6 +714,7 @@ def send_media_message(to: str, media_url: str, media_type: str, caption: str = 
 	"""Send a standalone image/video/document/audio message (composer
 	attach button) — as opposed to a header image that's part of a
 	Template send."""
+	_require_app_user()
 	to = normalize_outbound_number(to)
 	provider = _resolve_provider(provider)
 	when = _parse_schedule(scheduled_time)
@@ -681,6 +738,7 @@ def send_template_message(to: str, template: str, parameters: str | dict | None 
                            attach_print: int | bool = 0, print_format: str | None = None):
 	"""attach_print: render the referenced document's print format as a PDF
 	and send it as the Document header (used by the Desk WhatsApp button)."""
+	_require_app_user()
 	to = normalize_outbound_number(to)
 	tpl = frappe.get_doc("Whatsnext Message Template", template)
 	if isinstance(parameters, str):
@@ -735,6 +793,7 @@ def send_template_message(to: str, template: str, parameters: str | dict | None 
 
 @frappe.whitelist()
 def cancel_scheduled_message(name: str):
+	_require_app_user()
 	msg = frappe.get_doc("Whatsnext Message", name)
 	msg.check_permission("write")
 	if msg.status != "Pending" or not msg.scheduled_time:
@@ -806,6 +865,7 @@ def get_message_log(status: str | None = None, limit: int = 200, offset: int = 0
 	"""Every message (not just the latest per conversation), newest first,
 	for the Message Logs page. Uses get_list so the doctype's permission
 	query conditions apply the same customer scoping as the chat list."""
+	_require_app_user()
 	status = _clean_param(status)
 	filters = {}
 	if status and status != "All":
@@ -822,16 +882,26 @@ def get_message_log(status: str | None = None, limit: int = 200, offset: int = 0
 
 @frappe.whitelist()
 def get_templates(provider: str | None = None, approved_only: bool = False):
+	_require_app_user()
 	filters = {}
 	provider = _clean_param(provider)
 	if provider:
 		filters["provider"] = ["in", [provider, "Both"]]
+	or_filters = None
 	if int(approved_only or 0):
-		filters["approval_status"] = "Approved"
+		# "Sendable": approved by Meta, or set up for Twilio (Twilio
+		# templates are approved in Twilio's console and never get a Meta
+		# status here, so filtering on approval_status alone hid every
+		# Twilio-only template from the chat, New Chat and Desk pickers).
+		or_filters = [
+			["approval_status", "=", "Approved"],
+			["twilio_content_sid", "like", "HX%"],
+		]
 	templates = frappe.get_all(
 		"Whatsnext Message Template",
 		filters=filters,
-		fields=["name", "template_name", "provider", "language", "category", "approval_status", "rejection_reason", "body", "header_type", "header_text", "header_example_url", "footer_text", "twilio_content_sid", "meta_template_id", "variables_sample"],
+		or_filters=or_filters,
+		fields=["name", "template_name", "meta_name", "provider", "language", "category", "approval_status", "rejection_reason", "body", "header_type", "header_text", "header_example_url", "footer_text", "twilio_content_sid", "meta_template_id", "variables_sample"],
 		order_by="modified desc",
 	)
 	# Buttons are needed to ask for dynamic URL suffixes ({{1}}) at send time.
@@ -858,6 +928,7 @@ def submit_template_to_meta(template: str):
 	record its review status. Previously templates made in the app only
 	existed locally and stayed "Draft" until someone recreated them by hand
 	in Business Manager."""
+	_require_app_user()
 	if "System Manager" not in frappe.get_roles(frappe.session.user):
 		frappe.throw("Only System Managers can submit templates to Meta.", frappe.PermissionError)
 
@@ -924,7 +995,7 @@ def submit_template_to_meta(template: str):
 		components.append({"type": "BUTTONS", "buttons": buttons})
 
 	payload = {
-		"name": meta_template_name(tpl.template_name),
+		"name": tpl.meta_name or meta_template_name(tpl.template_name),
 		"language": tpl.language or "en",
 		"category": (tpl.category or "Utility").upper(),
 		"components": components,
@@ -944,6 +1015,7 @@ def submit_template_to_meta(template: str):
 		frappe.throw(f"Meta rejected the template: {e}")
 
 	tpl.db_set({
+		"meta_name": payload["name"],
 		"meta_template_id": result.get("id"),
 		"approval_status": _map_meta_status(result.get("status") or "PENDING"),
 		"rejection_reason": "",
@@ -956,6 +1028,7 @@ def update_template_provider_ids(template: str, twilio_content_sid: str | None =
 	"""Narrow, purpose-built endpoint (rather than exposing generic
 	frappe.client.set_value for this) so we can validate the SID shape and
 	keep the permission surface tight to just this one field."""
+	_require_app_user()
 	if twilio_content_sid and not twilio_content_sid.startswith("HX"):
 		frappe.throw("A Twilio Content SID normally starts with 'HX'. Double-check you copied the Content SID, not the Template SID.")
 	frappe.db.set_value("Whatsnext Message Template", template, "twilio_content_sid", twilio_content_sid or "")
@@ -967,6 +1040,7 @@ def update_template_provider_ids(template: str, twilio_content_sid: str | None =
 def save_recipient_list(list_name: str, recipients: str | list, description: str | None = None):
 	"""Creates or fully replaces a saved recipient list. recipients: list of
 	{"contact_name": "...", "to_number": "...", "parameters": {...}}."""
+	_require_app_user()
 	if isinstance(recipients, str):
 		recipients = json.loads(recipients)
 
@@ -1000,6 +1074,7 @@ def save_recipient_list(list_name: str, recipients: str | list, description: str
 
 @frappe.whitelist()
 def list_recipient_lists():
+	_require_app_user()
 	return frappe.get_all(
 		"Whatsnext Recipient List",
 		fields=["name", "list_name", "description", "recipient_count", "modified"],
@@ -1009,6 +1084,7 @@ def list_recipient_lists():
 
 @frappe.whitelist()
 def get_recipient_list(list_name: str):
+	_require_app_user()
 	doc = frappe.get_doc("Whatsnext Recipient List", list_name)
 	return {
 		"name": doc.name,
@@ -1027,6 +1103,7 @@ def get_recipient_list(list_name: str):
 
 @frappe.whitelist()
 def delete_recipient_list(list_name: str):
+	_require_app_user()
 	frappe.delete_doc("Whatsnext Recipient List", list_name, ignore_permissions=True)
 	return {"ok": True}
 
@@ -1038,6 +1115,7 @@ def create_campaign(campaign_name: str, template: str, recipients: str | list, p
 	or a JSON string of the same. Creates the Campaign in Draft and does NOT
 	send — call start_campaign separately so the frontend can show a
 	confirmation/preview step first."""
+	_require_app_user()
 	if isinstance(recipients, str):
 		recipients = json.loads(recipients)
 
@@ -1083,6 +1161,7 @@ def start_campaign(campaign_name: str):
 	"""Sends now, or marks the campaign Scheduled when it has a future
 	scheduled_time (the scheduler starts it when due). Also resumes a paused
 	campaign: only recipients still Pending are sent."""
+	_require_app_user()
 	from whatsnext.whatsnext.campaign_engine import start_campaign as _start
 
 	frappe.get_doc("Whatsnext Campaign", campaign_name).check_permission("write")
@@ -1106,6 +1185,7 @@ def start_campaign(campaign_name: str):
 
 @frappe.whitelist()
 def pause_campaign(campaign_name: str):
+	_require_app_user()
 	frappe.get_doc("Whatsnext Campaign", campaign_name).check_permission("write")
 	status = frappe.db.get_value("Whatsnext Campaign", campaign_name, "status")
 	if status not in ("Queued", "Sending", "Scheduled"):
@@ -1116,6 +1196,7 @@ def pause_campaign(campaign_name: str):
 
 @frappe.whitelist()
 def cancel_campaign(campaign_name: str):
+	_require_app_user()
 	frappe.get_doc("Whatsnext Campaign", campaign_name).check_permission("write")
 	status = frappe.db.get_value("Whatsnext Campaign", campaign_name, "status")
 	if status in ("Completed", "Cancelled"):
@@ -1128,6 +1209,7 @@ def cancel_campaign(campaign_name: str):
 def retry_failed_campaign(campaign_name: str):
 	"""Re-sends to recipients that failed (opted-out/skipped ones stay
 	skipped)."""
+	_require_app_user()
 	doc = frappe.get_doc("Whatsnext Campaign", campaign_name)
 	doc.check_permission("write")
 	if doc.status in ("Queued", "Sending"):
@@ -1148,6 +1230,7 @@ def retry_failed_campaign(campaign_name: str):
 
 @frappe.whitelist()
 def list_campaigns():
+	_require_app_user()
 	return frappe.get_all(
 		"Whatsnext Campaign",
 		fields=["name", "campaign_name", "template", "provider", "status", "scheduled_time", "total_recipients", "sent_count", "delivered_count", "failed_count", "skipped_count", "creation"],
@@ -1158,6 +1241,7 @@ def list_campaigns():
 
 @frappe.whitelist()
 def get_campaign(campaign_name: str):
+	_require_app_user()
 	doc = frappe.get_doc("Whatsnext Campaign", campaign_name)
 	return {
 		"name": doc.name,
@@ -1182,6 +1266,7 @@ def get_campaign(campaign_name: str):
 def export_campaign_results(campaign_name: str, format: str = "xlsx"):
 	"""Streams the campaign's recipient results as a file download.
 	format: 'xlsx' or 'pdf'."""
+	_require_app_user()
 	doc = frappe.get_doc("Whatsnext Campaign", campaign_name)
 
 	headers = ["Phone Number", "Status", "Parameters", "Error", "Message"]
@@ -1236,6 +1321,7 @@ def _customer_scope_sql():
 @frappe.whitelist()
 def dashboard_stats():
 	"""Powers the WhatsApp Hub dashboard: counts, delivery donut, weekly trend, top templates."""
+	_require_app_user()
 	today = getdate()
 	week_start = add_to_date(today, days=-6)
 
@@ -1357,6 +1443,7 @@ NOTIFICATION_FIELDS = [
 
 @frappe.whitelist()
 def list_notifications():
+	_require_app_user()
 	_require_system_manager()
 	return frappe.get_all(
 		"Whatsnext Notification",
@@ -1367,6 +1454,7 @@ def list_notifications():
 
 @frappe.whitelist()
 def get_notification(name: str):
+	_require_app_user()
 	_require_system_manager()
 	doc = frappe.get_doc("Whatsnext Notification", name)
 	data = {f: doc.get(f) for f in NOTIFICATION_FIELDS}
@@ -1382,6 +1470,7 @@ def get_notification(name: str):
 def save_notification(data: str | dict):
 	"""Create or update a Whatsnext Notification (validate() still enforces
 	the realtime-vs-Scheduled and PDF-header rules)."""
+	_require_app_user()
 	_require_system_manager()
 	if isinstance(data, str):
 		data = json.loads(data)
@@ -1406,6 +1495,7 @@ def save_notification(data: str | dict):
 
 @frappe.whitelist()
 def delete_notification(name: str):
+	_require_app_user()
 	_require_system_manager()
 	frappe.delete_doc("Whatsnext Notification", name)
 	return {"ok": True}
@@ -1415,6 +1505,7 @@ def delete_notification(name: str):
 def get_notification_options(doctype: str | None = None):
 	"""Doctypes with instant (realtime) events, and — for a chosen doctype —
 	its fields so the UI can offer pickers instead of free-typed names."""
+	_require_app_user()
 	_require_system_manager()
 	from whatsnext.hooks import WATCHED_DOCTYPES
 
@@ -1435,6 +1526,7 @@ def get_notification_options(doctype: str | None = None):
 @frappe.whitelist()
 def search_doctypes(txt: str = ""):
 	"""Any doctype can be watched with the Scheduled event."""
+	_require_app_user()
 	_require_system_manager()
 	return frappe.get_all(
 		"DocType",
@@ -1449,6 +1541,7 @@ def search_doctypes(txt: str = ""):
 def get_document_whatsapp_context(doctype: str, name: str):
 	"""For the Desk "WhatsApp" button: the best number to message for this
 	document, plus print formats and the existing chat (if any)."""
+	_require_app_user()
 	doc = frappe.get_doc(doctype, name)
 	doc.check_permission("read")
 
@@ -1493,6 +1586,7 @@ def save_template(data: str | dict):
 	page previously issued one set_value per field, which couldn't edit the
 	buttons table at all). Editing an Approved Meta template's content means
 	it must be re-reviewed, so the status drops back to Draft."""
+	_require_app_user()
 	if isinstance(data, str):
 		data = json.loads(data)
 	name = _clean_param(data.get("name"))
@@ -1539,3 +1633,48 @@ def save_template(data: str | dict):
 
 	doc.save()
 	return doc.as_dict()
+
+
+# ---------------------------------------------------------------------------
+# Quick replies
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
+def list_quick_replies(search: str | None = None):
+	_require_app_user()
+	search = _clean_param(search)
+	or_filters = None
+	if search:
+		like = f"%{search.lstrip('/')}%"
+		or_filters = [["title", "like", like], ["shortcut", "like", like], ["message", "like", like]]
+	return frappe.get_all(
+		"Whatsnext Quick Reply",
+		or_filters=or_filters,
+		fields=["name", "title", "shortcut", "message"],
+		order_by="title asc",
+		limit_page_length=100,
+	)
+
+
+@frappe.whitelist()
+def save_quick_reply(title: str, message: str, shortcut: str | None = None, name: str | None = None):
+	_require_app_user()
+	name = _clean_param(name)
+	if name:
+		doc = frappe.get_doc("Whatsnext Quick Reply", name)
+		if title != name:
+			frappe.throw("Renaming a quick reply isn't supported — create a new one instead.")
+	else:
+		doc = frappe.new_doc("Whatsnext Quick Reply")
+		doc.title = title
+	doc.message = message
+	doc.shortcut = _clean_param(shortcut)
+	doc.save()
+	return doc.as_dict()
+
+
+@frappe.whitelist()
+def delete_quick_reply(name: str):
+	_require_app_user()
+	frappe.delete_doc("Whatsnext Quick Reply", name)
+	return {"ok": True}

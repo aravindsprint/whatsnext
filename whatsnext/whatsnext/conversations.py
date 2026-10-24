@@ -144,3 +144,86 @@ def handle_opt_keywords(message_doc):
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), "Whatsnext: opt-out confirmation failed")
 	return True
+
+
+# --------------------------------------------------------------------------
+# Read receipts
+# --------------------------------------------------------------------------
+
+def send_read_receipt(message_id):
+	"""Background job (enqueued from api.mark_as_read)."""
+	settings = frappe.get_cached_doc("Whatsnext Settings")
+	if not (settings.send_read_receipts and settings.meta_enabled):
+		return
+	from whatsnext.whatsnext.provider_engine import MetaProvider, WhatsAppSendError
+
+	try:
+		MetaProvider(settings).mark_read(message_id)
+	except WhatsAppSendError:
+		# Meta only accepts receipts for recent messages; nothing to retry.
+		pass
+
+
+# --------------------------------------------------------------------------
+# Away message (outside business hours)
+# --------------------------------------------------------------------------
+
+_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def is_business_hours(settings, at=None) -> bool:
+	from frappe.utils import get_time, getdate
+
+	at = at or now_datetime()
+	days = {d.strip()[:3].title() for d in (settings.business_days or "").split(",") if d.strip()}
+	if days and _DAYS[at.weekday()] not in days:
+		return False
+
+	if settings.holiday_list and frappe.db.exists(
+		"Holiday", {"parent": settings.holiday_list, "holiday_date": getdate(at)}
+	):
+		return False
+
+	if not (settings.business_hours_start and settings.business_hours_end):
+		return True
+	start, end, now = get_time(settings.business_hours_start), get_time(settings.business_hours_end), at.time()
+	if start <= end:
+		return start <= now < end
+	return now >= start or now < end  # overnight hours, e.g. 20:00-02:00
+
+
+def queue_away_reply(message_doc):
+	"""Called from the inbound webhook for each customer message. Cheap
+	checks happen here; the send runs in the background after commit."""
+	settings = frappe.get_cached_doc("Whatsnext Settings")
+	if not (settings.away_enabled and settings.away_message) or is_business_hours(settings):
+		return
+	frappe.enqueue(
+		"whatsnext.whatsnext.conversations.send_away_reply",
+		queue="short",
+		enqueue_after_commit=True,
+		conversation_id=message_doc.conversation_id,
+		provider=message_doc.provider,
+	)
+
+
+def send_away_reply(conversation_id, provider=None):
+	settings = frappe.get_cached_doc("Whatsnext Settings")
+	if not (settings.away_enabled and settings.away_message) or is_business_hours(settings):
+		return
+
+	cooldown = int(settings.away_cooldown_hours or 12)
+	last = frappe.db.get_value("Whatsnext Conversation", conversation_id, "last_away_reply_at")
+	if last and get_datetime(last) > add_to_date(now_datetime(), hours=-cooldown):
+		return
+
+	# Claim the slot first so two messages arriving together send one reply.
+	frappe.db.set_value("Whatsnext Conversation", conversation_id, "last_away_reply_at", now_datetime(), update_modified=False)
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background job; claim before the slow send
+
+	from whatsnext.whatsnext.api import send_message
+
+	try:
+		send_message(to=conversation_id, message=settings.away_message, provider=provider)
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), f"Whatsnext: away reply to {conversation_id} failed")

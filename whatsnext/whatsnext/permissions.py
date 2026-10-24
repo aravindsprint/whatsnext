@@ -94,3 +94,41 @@ def users_who_can_see(customer: str | None) -> list[str]:
 		if allowed is None or not customer or customer in allowed:
 			users.append(user)
 	return users
+
+
+APP_ROLES = ("Whatsnext User", "System Manager")
+
+
+def is_app_user(user: str = None) -> bool:
+	user = user or frappe.session.user
+	if user == "Administrator":
+		return True
+	return bool(set(frappe.get_roles(user)) & set(APP_ROLES))
+
+
+def require_app_user():
+	"""Called at the top of every whitelisted Whatsnext endpoint. Without it,
+	any logged-in account — including website/portal users such as customers
+	and suppliers — could send WhatsApp messages from the business number,
+	export campaign results or delete recipient lists.
+
+	Only enforced for HTTP requests aimed directly at a Whatsnext method.
+	The same functions are also called internally — from the public webhook
+	(opt-out confirmations, away replies) and from background jobs (event
+	notifications enqueued by whoever saved the document) — where the
+	session user legitimately isn't an app user."""
+	request = getattr(frappe.local, "request", None)
+	if not request:
+		return
+	import re
+
+	path = request.path or ""
+	cmd = (frappe.form_dict or {}).get("cmd") or ""
+	target = cmd or (re.sub(r"^/api/(v\d+/)?method/", "", path) if "/method/" in path else "")
+	if not target.startswith("whatsnext.") or ".api.webhook." in target:
+		return
+	if not is_app_user():
+		frappe.throw(
+			"You need the Whatsnext User role to use WhatsApp messaging.",
+			frappe.PermissionError,
+		)

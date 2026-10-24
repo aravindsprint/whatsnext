@@ -121,6 +121,44 @@ function insertEmoji(e) {
   showEmojiPicker.value = false
 }
 
+// --- Quick replies -------------------------------------------------------
+const quickReplies = ref([])
+const showQuickReplies = ref(false)
+const qrSearch = ref('')
+
+async function loadQuickReplies() {
+  try {
+    quickReplies.value = await call('whatsnext.whatsnext.api.list_quick_replies', {}, 'GET')
+  } catch {
+    quickReplies.value = []
+  }
+}
+
+// Typing "/" at the start of the composer suggests replies by shortcut/title.
+const slashQuery = computed(() => (draft.value.startsWith('/') && !draft.value.includes(' ') ? draft.value.slice(1).toLowerCase() : null))
+function matchReplies(q) {
+  if (!q) return quickReplies.value
+  return quickReplies.value.filter((r) =>
+    (r.shortcut || '').toLowerCase().includes(q) || (r.title || '').toLowerCase().includes(q) || (r.message || '').toLowerCase().includes(q)
+  )
+}
+const slashMatches = computed(() => (slashQuery.value === null ? [] : matchReplies(slashQuery.value).slice(0, 6)))
+const pickerMatches = computed(() => matchReplies(qrSearch.value.trim().toLowerCase()))
+
+function useQuickReply(r) {
+  const name = (activeConversation.value?.profile_name || info.value?.profile_name || '').split(' ')[0]
+  draft.value = (r.message || '').replace(/\{name\}/g, name || 'there')
+  showQuickReplies.value = false
+  qrSearch.value = ''
+}
+
+function onDraftKeydown(e) {
+  if (e.key === 'Tab' && slashMatches.value.length) {
+    e.preventDefault()
+    useQuickReply(slashMatches.value[0])
+  }
+}
+
 // --- Schedule (free text) ----------------------------------------------
 const showSchedule = ref(false)
 const scheduleAt = ref('')
@@ -207,6 +245,7 @@ async function sendTplToActiveConversation(payload) {
 
 // --- Lifecycle --------------------------------------------------------
 onMounted(async () => {
+  loadQuickReplies()
   chat.subscribeRealtime()
   chat.loadStats()
   await chat.loadConversations()
@@ -496,6 +535,21 @@ async function sendNewChat(payload) {
                 <button v-for="e in commonEmojis" :key="e" type="button" @click="insertEmoji(e)">{{ e }}</button>
               </div>
             </div>
+            <div class="wn-emoji-wrap">
+              <button type="button" class="wn-tpl-btn" :class="{ active: showQuickReplies }" @click="showQuickReplies = !showQuickReplies; showEmojiPicker = false" title="Quick replies (or type /)">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /></svg>
+              </button>
+              <div v-if="showQuickReplies" class="wn-qr-popup">
+                <input v-model="qrSearch" type="text" placeholder="Search quick replies" class="wn-qr-search" />
+                <button v-for="r in pickerMatches" :key="r.name" type="button" class="wn-qr-item" @click="useQuickReply(r)">
+                  <strong>{{ r.title }}</strong><span v-if="r.shortcut" class="wn-qr-shortcut">/{{ r.shortcut }}</span>
+                  <span class="wn-qr-text">{{ r.message }}</span>
+                </button>
+                <p v-if="!pickerMatches.length" class="wn-muted-small wn-qr-empty">
+                  No quick replies yet — add them in <router-link to="/whatsnext/settings">Settings</router-link>.
+                </p>
+              </div>
+            </div>
             <button type="button" class="wn-tpl-btn" @click="triggerFilePicker" :disabled="attachSending" title="Attach file">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
@@ -512,7 +566,13 @@ async function sendNewChat(payload) {
             <option value="">Default ({{ auth.defaultProvider }})</option>
             <option v-for="p in auth.providers" :key="p" :value="p">{{ p }}</option>
           </select>
-          <input v-model="draft" type="text" :disabled="!windowOpen"
+          <div v-if="slashMatches.length && windowOpen" class="wn-slash-popup">
+            <button v-for="r in slashMatches" :key="r.name" type="button" class="wn-qr-item" @click="useQuickReply(r)">
+              <strong>{{ r.title }}</strong><span v-if="r.shortcut" class="wn-qr-shortcut">/{{ r.shortcut }}</span>
+              <span class="wn-qr-text">{{ r.message }}</span>
+            </button>
+          </div>
+          <input v-model="draft" type="text" :disabled="!windowOpen" @keydown="onDraftKeydown"
                  :placeholder="windowOpen ? 'Type a message' : 'Templates only — the customer hasn’t written in 24 hours'" />
           <button type="submit" :disabled="!windowOpen">{{ showSchedule ? 'Schedule' : 'Send' }}</button>
         </form>
@@ -762,7 +822,15 @@ async function sendNewChat(payload) {
 .wn-link { background: none; border: none; color: var(--wn-blue); padding: 0; font-size: inherit; text-decoration: underline; }
 .wn-schedule-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px 0; font-size: 12.5px; }
 .wn-schedule-row input { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--wn-border); }
-.wn-composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--wn-border); align-items: center; }
+.wn-composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--wn-border); align-items: center; position: relative; }
+.wn-qr-popup, .wn-slash-popup { position: absolute; bottom: 44px; left: 0; background: white; border-radius: 10px; box-shadow: 0 4px 16px rgba(15,61,62,0.16); padding: 6px; z-index: 30; width: 320px; max-width: 86vw; max-height: 320px; overflow-y: auto; }
+.wn-slash-popup { bottom: 60px; left: 12px; }
+.wn-qr-search { width: 100%; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--wn-border); font-size: 12.5px; margin-bottom: 4px; box-sizing: border-box; }
+.wn-qr-item { display: block; width: 100%; text-align: left; background: none !important; color: var(--wn-text) !important; border: none; padding: 8px !important; border-radius: 8px !important; font-weight: 400 !important; font-size: 12.5px; }
+.wn-qr-item:hover { background: var(--wn-bg) !important; }
+.wn-qr-shortcut { margin-left: 6px; color: var(--wn-teal); font-size: 11.5px; }
+.wn-qr-text { display: block; color: var(--wn-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.wn-qr-empty { padding: 8px; }
 .wn-composer input { flex: 1; min-width: 0; padding: 10px 14px; border-radius: 20px; border: 1px solid var(--wn-border); font-size: 14px; }
 .wn-composer input:disabled { background: var(--wn-bg); }
 .wn-composer button { padding: 10px 18px; border-radius: 20px; border: none; background: var(--wn-teal); color: white; font-weight: 600; }

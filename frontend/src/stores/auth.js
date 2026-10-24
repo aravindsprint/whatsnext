@@ -12,6 +12,7 @@ export const useAuthStore = defineStore('auth', {
     optOutEnabled: false,
     agents: [],
     loaded: false,
+    hasAccess: true,
     loggingIn: false,
     error: null,
   }),
@@ -45,6 +46,7 @@ export const useAuthStore = defineStore('auth', {
         this.defaultProvider = res.default_provider
         this.optOutEnabled = !!res.opt_out_enabled
         this.agents = res.agents || []
+        this.hasAccess = res.has_access !== false
         this.loaded = true
       } catch {
         // non-fatal — settings page will just stay hidden

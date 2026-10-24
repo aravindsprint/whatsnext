@@ -61,6 +61,14 @@ def meta_template_name(name: str) -> str:
 	return re.sub(r"_+", "_", slug)[:512]
 
 
+def _meta_name_for(template: str) -> str:
+	"""The template's exact name on Meta: stored meta_name when known
+	(synced/submitted templates, including language variants), else the
+	Meta-safe form of the local name."""
+	stored = frappe.db.get_value("Whatsnext Message Template", template, "meta_name")
+	return stored or meta_template_name(template)
+
+
 def split_template_params(params: dict | None):
 	"""Template parameters arrive as one flat dict: "1", "2"... fill the
 	body, "header_1" fills a text header's {{1}}, and "button_<index>" fills
@@ -159,7 +167,7 @@ class MetaProvider(BaseProvider):
 			"to": to,
 			"type": "template",
 			"template": {
-				"name": meta_template_name(template),
+				"name": _meta_name_for(template),
 				"language": {"code": lang or "en"},
 				"components": components,
 			},
@@ -174,6 +182,11 @@ class MetaProvider(BaseProvider):
 			media_type: {"link": media_url, **({"caption": caption} if caption else {})},
 		}
 		return self._post(payload)
+
+	def mark_read(self, message_id: str) -> dict:
+		"""Read receipt: the customer sees blue ticks on this message and
+		every earlier one in the chat."""
+		return self._post({"messaging_product": "whatsapp", "status": "read", "message_id": message_id})
 
 	def test_connection(self) -> dict:
 		"""Lightweight credential check: fetch the phone number's own
