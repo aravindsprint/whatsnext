@@ -11,7 +11,7 @@ def test_meta_hosted_urls_are_refreshable():
 
 
 def test_own_links_are_kept():
-	assert not is_meta_hosted_url("https://erp.pranera.in/files/mars200.jpg")
+	assert not is_meta_hosted_url("https://erp.example.com/files/product.jpg")
 	assert not is_meta_hosted_url("https://cdn.example.com/whatsapp.net.jpg")
 
 

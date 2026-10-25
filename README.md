@@ -80,6 +80,9 @@ yarn install
 yarn dev   # proxies /api to http://localhost:8000 by default
 ```
 
+To develop against another site, copy `frontend/.env.example` to
+`frontend/.env.local` and set `WHATSNEXT_DEV_SITE` (that file is git-ignored).
+
 See `DEPLOY.md` for the production build/deploy checklist.
 
 ## Tests

@@ -153,7 +153,7 @@ def test_twilio_text_send_uses_plus(frappe, monkeypatch):
 
 def test_meta_param_text_cleans_values_meta_rejects():
 	# Multi-line product list: Meta answers "(#100) Invalid parameter".
-	assert pe.meta_param_text("1. MARS 200 | Qty: 51\n2. MARS COLLAR | Qty: 4\n") == "1. MARS 200 | Qty: 51 • 2. MARS COLLAR | Qty: 4"
+	assert pe.meta_param_text("1. Fabric A | Qty: 51\n2. Collar B | Qty: 4\n") == "1. Fabric A | Qty: 51 • 2. Collar B | Qty: 4"
 	assert pe.meta_param_text("a\tb") == "a • b"
 	assert pe.meta_param_text("a      b") == "a b"
 	assert pe.meta_param_text(None) == "-"
@@ -181,6 +181,6 @@ def test_send_template_sends_clean_params(monkeypatch):
 	monkeypatch.setattr(provider, "_post", lambda payload, context_id=None: sent.update(payload) or {}, raising=False)
 	monkeypatch.setattr(pe, "_meta_name_for", lambda t: t)
 	monkeypatch.setattr(pe.frappe.db, "get_value", lambda *a, **k: "Lead: {{1}} Loc: {{2}} Products: {{3}}", raising=False)
-	provider.send_template("919000000000", "crm_lead_status_update_v2", {"1": "ALEX", "2": None, "3": "1. A\n2. B"})
+	provider.send_template("919000000000", "lead_status_update", {"1": "ALEX", "2": None, "3": "1. A\n2. B"})
 	params = [p["text"] for p in sent["template"]["components"][0]["parameters"]]
 	assert params == ["ALEX", "-", "1. A • 2. B"]
