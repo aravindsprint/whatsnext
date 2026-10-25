@@ -1002,7 +1002,7 @@ async function sendNewChat(payload) {
           <div><label>Longitude</label><input v-model="loc.longitude" type="text" inputmode="decimal" /></div>
         </div>
         <label>Place name (optional)</label>
-        <input v-model="loc.name" type="text" placeholder="Pranera Unit 2" />
+        <input v-model="loc.name" type="text" placeholder="Main warehouse" />
         <label>Address (optional)</label>
         <input v-model="loc.address" type="text" />
         <p v-if="locError" class="wn-error">{{ locError }}</p>

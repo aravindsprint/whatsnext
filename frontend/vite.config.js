@@ -1,8 +1,16 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { VitePWA } from 'vite-plugin-pwa'
 
-export default defineConfig(({ command }) => ({
+// The Frappe site the dev server proxies to. Set WHATSNEXT_DEV_SITE in
+// frontend/.env.local (git-ignored, see .env.example) to point `yarn dev` at
+// your own bench or a staging site; it defaults to a local bench.
+function devSite(mode) {
+  const env = loadEnv(mode, process.cwd(), '')
+  return (env.WHATSNEXT_DEV_SITE || 'http://localhost:8000').replace(/\/+$/, '')
+}
+
+export default defineConfig(({ command, mode }) => ({
   plugins: [
     vue(),
     VitePWA({
@@ -90,13 +98,13 @@ export default defineConfig(({ command }) => ({
     host: 'whatsnext.local',
     proxy: {
       '/api': {
-        target: 'https://erp.pranera.in',
+        target: devSite(mode),
         changeOrigin: true,
         secure: false,
         cookieDomainRewrite: 'whatsnext.local',
         headers: {
-          'Origin': 'https://erp.pranera.in',
-          'Referer': 'https://erp.pranera.in'
+          'Origin': devSite(mode),
+          'Referer': devSite(mode)
         },
         configure(proxy) {
           proxy.on('proxyReq', (proxyReq) => {
@@ -113,17 +121,17 @@ export default defineConfig(({ command }) => ({
         }
       },
       '/assets': {
-        target: 'https://erp.pranera.in',
+        target: devSite(mode),
         changeOrigin: true,
         secure: false
       },
       '/files': {
-        target: 'https://erp.pranera.in',
+        target: devSite(mode),
         changeOrigin: true,
         secure: false
       },
       '/socket.io': {
-        target: 'https://erp.pranera.in',
+        target: devSite(mode),
         changeOrigin: true,
         secure: false,
         ws: true
