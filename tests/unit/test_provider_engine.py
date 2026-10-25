@@ -149,3 +149,38 @@ def test_twilio_text_send_uses_plus(frappe, monkeypatch):
 	monkeypatch.setattr(pe.requests, "post", post)
 	pe.TwilioProvider(frappe.settings).send_text("919876543210", "hi")
 	assert post.call_args.kwargs["data"]["To"] == "whatsapp:+919876543210"
+
+
+def test_meta_param_text_cleans_values_meta_rejects():
+	# Multi-line product list: Meta answers "(#100) Invalid parameter".
+	assert pe.meta_param_text("1. MARS 200 | Qty: 51\n2. MARS COLLAR | Qty: 4\n") == "1. MARS 200 | Qty: 51 • 2. MARS COLLAR | Qty: 4"
+	assert pe.meta_param_text("a\tb") == "a • b"
+	assert pe.meta_param_text("a      b") == "a b"
+	assert pe.meta_param_text(None) == "-"
+	assert pe.meta_param_text("   ") == "-"
+	assert pe.meta_param_text(720.0) == "720.0"
+
+
+def test_fit_body_params_keeps_short_values():
+	assert pe.fit_body_params("Hi {{1}}", ["Aravind"]) == ["Aravind"]
+	assert pe.fit_body_params(None, ["x" * 5000]) == ["x" * 5000]
+
+
+def test_fit_body_params_trims_longest_to_meta_limit():
+	body = "Lead: {{1}}\nProducts: {{2}}"
+	values = pe.fit_body_params(body, ["ALEX", "p" * 2000])
+	filled = body.replace("{{1}}", values[0]).replace("{{2}}", values[1])
+	assert len(filled) <= pe.META_BODY_LIMIT
+	assert values[0] == "ALEX"
+	assert values[1].endswith("…")
+
+
+def test_send_template_sends_clean_params(monkeypatch):
+	sent = {}
+	provider = pe.MetaProvider.__new__(pe.MetaProvider)
+	monkeypatch.setattr(provider, "_post", lambda payload, context_id=None: sent.update(payload) or {}, raising=False)
+	monkeypatch.setattr(pe, "_meta_name_for", lambda t: t)
+	monkeypatch.setattr(pe.frappe.db, "get_value", lambda *a, **k: "Lead: {{1}} Loc: {{2}} Products: {{3}}", raising=False)
+	provider.send_template("919000000000", "crm_lead_status_update_v2", {"1": "ALEX", "2": None, "3": "1. A\n2. B"})
+	params = [p["text"] for p in sent["template"]["components"][0]["parameters"]]
+	assert params == ["ALEX", "-", "1. A • 2. B"]

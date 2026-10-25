@@ -7,6 +7,8 @@ BaseProvider and registering it in get_provider().
 """
 
 import json
+import re
+
 import requests
 import frappe
 
@@ -37,6 +39,44 @@ def _json_or_error(resp) -> dict:
 		if resp.status_code >= 400:
 			raise WhatsAppSendError(f"HTTP {resp.status_code}: {(resp.text or '')[:200]}")
 		return {}
+
+
+# Meta rejects a template send with "(#100) Invalid parameter" when any
+# parameter is empty, contains a newline or tab, or has more than four
+# spaces in a row, and when the filled-in body runs past 1024 characters.
+# CRM Lead alerts carry a multi-line product list, so every lead with more
+# than one product failed. Clean every value before it is sent.
+META_BODY_LIMIT = 1024
+EMPTY_PARAM = "-"
+
+
+def meta_param_text(value) -> str:
+	text = "" if value is None else str(value)
+	text = re.sub(r"\s*[\r\n\t]+\s*", " • ", text.strip())
+	text = re.sub(r" {2,}", " ", text).strip(" •")
+	return text or EMPTY_PARAM
+
+
+def fit_body_params(body: str | None, values: list[str]) -> list[str]:
+	"""Trim the longest values (with an ellipsis) until the body, once filled
+	in, fits Meta's limit. Without the template body there is nothing to
+	measure against, so the values are returned as they are."""
+	if not body:
+		return values
+	values = list(values)
+	fixed = len(re.sub(r"\{\{\d+\}\}", "", body))
+	budget = META_BODY_LIMIT - fixed
+	while values and sum(len(v) for v in values) > budget:
+		i = max(range(len(values)), key=lambda j: len(values[j]))
+		over = sum(len(v) for v in values) - budget
+		keep = len(values[i]) - over - 1
+		if keep < 1:
+			values[i] = "…"
+			if all(len(v) <= 1 for v in values):
+				break
+			continue
+		values[i] = values[i][:keep].rstrip() + "…"
+	return values
 
 
 def _ordered_values(params: dict) -> list:
@@ -187,12 +227,15 @@ class MetaProvider(BaseProvider):
 		elif header_param not in (None, ""):
 			components.append({
 				"type": "header",
-				"parameters": [{"type": "text", "text": str(header_param)}],
+				"parameters": [{"type": "text", "text": meta_param_text(header_param)}],
 			})
 		if body_params:
+			values = [meta_param_text(v) for v in _ordered_values(body_params)]
+			body = frappe.db.get_value("Whatsnext Message Template", template, "body")
+			values = fit_body_params(body, values)
 			components.append({
 				"type": "body",
-				"parameters": [{"type": "text", "text": str(v)} for v in _ordered_values(body_params)],
+				"parameters": [{"type": "text", "text": v} for v in values],
 			})
 		for index in sorted(button_params):
 			components.append({
