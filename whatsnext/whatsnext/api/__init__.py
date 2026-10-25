@@ -119,6 +119,26 @@ def sync_templates_from_meta():
 	return {"created": created, "updated": updated, "total_fetched": len(remote_templates), "errors": errors}
 
 
+def is_meta_hosted_url(url) -> bool:
+	"""True for an empty value or a link Meta hosts (template sample media
+	on scontent.whatsapp.net / fbcdn), which expires after about a month."""
+	if not url:
+		return True
+	from urllib.parse import urlparse
+
+	host = (urlparse(url).hostname or "").lower()
+	return host.endswith("whatsapp.net") or host.endswith("fbcdn.net")
+
+
+def meta_header_sample_url(t) -> str:
+	"""The header sample media link from a template as Meta returns it."""
+	for comp in t.get("components", []):
+		if (comp.get("type") or "").upper() == "HEADER" and (comp.get("format") or "").upper() in ("IMAGE", "VIDEO", "DOCUMENT"):
+			handles = comp.get("example", {}).get("header_handle", [])
+			return handles[0] if handles else ""
+	return ""
+
+
 def _sync_one_meta_template(t):
 	meta_id = t.get("id")
 	name = t.get("name")
@@ -170,7 +190,9 @@ def _sync_one_meta_template(t):
 		doc.approval_status = _map_meta_status(t.get("status"))
 		doc.meta_template_id = meta_id
 		doc.meta_name = name
-		if header_example_url:
+		# Meta's sample link is temporary; refresh it, but keep a permanent
+		# link someone entered on the template themselves.
+		if header_example_url and is_meta_hosted_url(doc.header_example_url):
 			doc.header_example_url = header_example_url
 		doc.save(ignore_permissions=True)
 		return "updated"

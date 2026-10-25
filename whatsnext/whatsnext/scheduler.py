@@ -171,7 +171,11 @@ def dispatch_scheduled_doctype_notifications():
 
 def refresh_template_approval_status():
 	"""Daily: pull Meta template approval statuses so locally-created templates
-	reflect real WhatsApp Business Manager review outcomes."""
+	reflect real WhatsApp Business Manager review outcomes, and refresh the
+	header sample links. Those links expire after about a month, and image,
+	video and document templates are sent with them (from chat and
+	campaigns), so without this every such send started failing once the
+	link ran out unless someone remembered to re-sync."""
 	settings = frappe.get_cached_doc("Whatsnext Settings")
 	if not settings.meta_enabled:
 		return
@@ -184,12 +188,23 @@ def refresh_template_approval_status():
 		frappe.log_error(frappe.get_traceback(), "Whatsnext: failed to refresh Meta template statuses")
 		return
 
+	from whatsnext.whatsnext.api import is_meta_hosted_url, meta_header_sample_url
+
 	status_map = {"APPROVED": "Approved", "PENDING": "Pending", "REJECTED": "Rejected"}
 	for t in remote_templates:
-		local_name = frappe.db.get_value("Whatsnext Message Template", {"meta_template_id": t.get("id")})
-		if not local_name:
+		local = frappe.db.get_value(
+			"Whatsnext Message Template", {"meta_template_id": t.get("id")},
+			["name", "header_example_url"], as_dict=True,
+		)
+		if not local:
 			continue
+		updates = {}
 		new_status = status_map.get(t.get("status"))
 		if new_status:
-			frappe.db.set_value("Whatsnext Message Template", local_name, "approval_status", new_status)
+			updates["approval_status"] = new_status
+		sample_url = meta_header_sample_url(t)
+		if sample_url and sample_url != local.header_example_url and is_meta_hosted_url(local.header_example_url):
+			updates["header_example_url"] = sample_url
+		if updates:
+			frappe.db.set_value("Whatsnext Message Template", local.name, updates)
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- scheduled job

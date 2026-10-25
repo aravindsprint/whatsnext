@@ -160,6 +160,13 @@ def _attach_document_pdf(notif, doc):
 	html = get_html(doctype=doc.doctype, name=doc.name, print_format=notif.print_format or None, no_letterhead=0)
 	pdf_content = get_pdf(html)
 
-	fname = f"{doc.doctype}-{doc.name}.pdf".replace(" ", "-").replace("/", "-")
+	# The file must be public for Meta/Twilio to fetch it, so its name must not
+	# be guessable: "Sales-Invoice-PTGB26-07095.pdf" let anyone download every
+	# invoice by counting through the numbers. The random part makes each link
+	# unguessable; customers still see the readable part as the file name.
+	import secrets
+
+	readable = f"{doc.doctype}-{doc.name}".replace(" ", "-").replace("/", "-")
+	fname = f"{readable}-{secrets.token_urlsafe(12)}.pdf"
 	file_doc = save_file(fname, pdf_content, doc.doctype, doc.name, is_private=0)
 	return file_doc.file_url if file_doc.file_url.startswith("http") else frappe.utils.get_url(file_doc.file_url)
