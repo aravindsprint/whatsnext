@@ -82,14 +82,20 @@ def touch_conversation(msg, sending_scheduled=False):
 		_bump(conversation_id, "outgoing_count", 1)
 
 
-def _bump(conversation_id, field, delta):
-	assert field in ("unread_count", "outgoing_count")
-	frappe.db.sql(
-		f"""UPDATE `tabWhatsnext Conversation`
-		SET `{field}` = GREATEST(COALESCE(`{field}`, 0) + %(delta)s, 0)
+# One fixed statement per counter: the column can't be a query parameter, and
+# building it into the SQL string is what the Marketplace security scan rejects.
+_BUMP_SQL = {
+	"unread_count": """UPDATE `tabWhatsnext Conversation`
+		SET `unread_count` = GREATEST(COALESCE(`unread_count`, 0) + %(delta)s, 0)
 		WHERE name = %(name)s""",
-		{"delta": delta, "name": conversation_id},
-	)
+	"outgoing_count": """UPDATE `tabWhatsnext Conversation`
+		SET `outgoing_count` = GREATEST(COALESCE(`outgoing_count`, 0) + %(delta)s, 0)
+		WHERE name = %(name)s""",
+}
+
+
+def _bump(conversation_id, field, delta):
+	frappe.db.sql(_BUMP_SQL[field], {"delta": delta, "name": conversation_id})
 
 
 def mark_conversation_read(conversation_id):

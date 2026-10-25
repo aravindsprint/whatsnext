@@ -1424,8 +1424,7 @@ def export_campaign_results(campaign_name: str, format: str = "xlsx"):
 	elif format == "pdf":
 		from frappe.utils.pdf import get_pdf
 
-		html = frappe.render_template(
-			"whatsnext/templates/campaign_results_pdf.html",
+		html = frappe.get_template("whatsnext/templates/campaign_results_pdf.html").render(
 			{
 				"campaign_name": doc.campaign_name,
 				"template": doc.template,
