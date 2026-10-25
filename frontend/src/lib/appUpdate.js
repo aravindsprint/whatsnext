@@ -66,24 +66,67 @@ function onNewVersion() {
   })
 }
 
+const SW_URL = import.meta.env.PROD ? '/whatsnext/sw.js' : '/sw.js'
+const SW_SCOPE = import.meta.env.PROD ? '/whatsnext/' : '/'
+
+function register() {
+  // 'none': always fetch sw.js (and anything it imports) from the network
+  // when checking for updates, never from the HTTP cache.
+  return navigator.serviceWorker.register(SW_URL, { scope: SW_SCOPE, updateViaCache: 'none' })
+}
+
+function waitForActive(worker) {
+  return new Promise((resolve, reject) => {
+    if (worker.state === 'activated') return resolve()
+    worker.addEventListener('statechange', () => {
+      if (worker.state === 'activated') resolve()
+      else if (worker.state === 'redundant') reject(new Error('The app could not finish installing in this browser.'))
+    })
+  })
+}
+
+// The registration with an active worker, for push. Works from any page,
+// including /whatsnext (outside the /whatsnext/ scope), unlike
+// navigator.serviceWorker.ready, which only resolves for in-scope pages.
+export async function getActiveRegistration(timeoutMs = 15000) {
+  if (!('serviceWorker' in navigator)) throw new Error('This browser does not support service workers.')
+  const reg = (await navigator.serviceWorker.getRegistration(SW_SCOPE)) || (await register())
+  const worker = reg.active || reg.waiting || reg.installing
+  if (!worker) throw new Error('The app could not install in this browser. Reload the page and try again.')
+  let timer
+  try {
+    await Promise.race([
+      waitForActive(worker),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(
+          'The app is still installing in this browser. Reload the page and try again.'
+        )), timeoutMs)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+  return reg
+}
+
 export function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return
 
-  const swUrl = import.meta.env.PROD ? '/whatsnext/sw.js' : '/sw.js'
-  const scope = import.meta.env.PROD ? '/whatsnext/' : '/'
-
-  // A page with no controller yet is a first install, not an update: the
-  // worker taking control then must not trigger a reload.
-  const hadController = !!navigator.serviceWorker.controller
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (hadController) onNewVersion()
-  })
-
-  navigator.serviceWorker
-    // 'none': always fetch sw.js (and anything it imports) from the network
-    // when checking for updates, never from the HTTP cache.
-    .register(swUrl, { scope, updateViaCache: 'none' })
+  register()
     .then((registration) => {
+      // A new build is live once a new worker activates while an older one
+      // was already active. Watched on the registration rather than through
+      // 'controllerchange', because a page opened at /whatsnext sits outside
+      // the /whatsnext/ scope and is never controlled, so it would never
+      // hear about updates that way. No prior active worker means a first
+      // install, which must not trigger a reload.
+      registration.addEventListener('updatefound', () => {
+        const hadActive = !!registration.active
+        const incoming = registration.installing
+        if (!hadActive || !incoming) return
+        waitForActive(incoming).then(onNewVersion, () => { /* failed install: keep current build */ })
+      })
+
       const check = () => registration.update().catch(() => { /* offline: try next time */ })
       check()
       document.addEventListener('visibilitychange', () => {

@@ -1,4 +1,5 @@
 import { call } from '@/api/frappe'
+import { getActiveRegistration } from '@/lib/appUpdate'
 
 // The Push API wants the VAPID public key as a Uint8Array, but the server
 // hands it over as a URL-safe base64 string — this is the standard
@@ -21,12 +22,8 @@ export function pushPermission() {
 
 export async function getExistingSubscription() {
   if (!pushSupported()) return null
-  // serviceWorker.ready never resolves when no worker is registered (dev,
-  // or registration failed), which would hang logout; give up after 3s.
-  const reg = await Promise.race([
-    navigator.serviceWorker.ready,
-    new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
-  ])
+  // Short timeout: this also runs on logout, which must never hang.
+  const reg = await getActiveRegistration(3000).catch(() => null)
   return reg ? reg.pushManager.getSubscription() : null
 }
 
@@ -49,7 +46,13 @@ export async function enablePush() {
     throw new Error('Notification permission was not granted.')
   }
 
-  const reg = await navigator.serviceWorker.ready
+  // Not navigator.serviceWorker.ready: that only resolves for a page inside
+  // the worker's scope (/whatsnext/), and a tab first opened at /whatsnext
+  // (no trailing slash) stays outside it even after clicking through to
+  // /whatsnext/settings, so enabling push waited forever on "Turning on…".
+  // A push subscription only needs the registration itself, controlled
+  // page or not.
+  const reg = await getActiveRegistration(15000)
   let subscription = await reg.pushManager.getSubscription()
   if (!subscription) {
     subscription = await reg.pushManager.subscribe({
