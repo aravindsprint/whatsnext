@@ -58,7 +58,31 @@ def whoami():
 		"default_provider": settings.default_provider,
 		"opt_out_enabled": bool(settings.opt_out_enabled),
 		"agents": agents,
+		"extensions": get_extensions() if has_access else {},
 	}
+
+
+def get_extensions():
+	"""Features added by other installed apps through the
+	`whatsnext_extensions` hook, keyed by feature name, e.g.
+	{"smart_replies": {"options": "<method>", "suggest": "<method>"}}.
+
+	Each hook entry is a dict with "feature", an optional "enabled" method
+	(checked here, so the chat only shows switched-on features) and the
+	whitelisted methods the chat calls. A broken extension is logged and
+	skipped; it never stops the chat loading."""
+	extensions = {}
+	for ext in frappe.get_hooks("whatsnext_extensions") or []:
+		if not isinstance(ext, dict) or not ext.get("feature"):
+			continue
+		try:
+			if ext.get("enabled") and not frappe.get_attr(ext["enabled"])():
+				continue
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), f"Whatsnext extension '{ext.get('feature')}' failed its enabled check")
+			continue
+		extensions[ext["feature"]] = {k: v for k, v in ext.items() if k not in ("feature", "enabled")}
+	return extensions
 
 
 def _map_meta_category(cat: str) -> str:

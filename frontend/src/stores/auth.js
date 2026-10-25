@@ -11,6 +11,8 @@ export const useAuthStore = defineStore('auth', {
     defaultProvider: null,
     optOutEnabled: false,
     agents: [],
+    // Features added by other installed apps, e.g. { smart_replies: {...} }
+    extensions: {},
     loaded: false,
     hasAccess: true,
     loggingIn: false,
@@ -46,6 +48,7 @@ export const useAuthStore = defineStore('auth', {
         this.defaultProvider = res.default_provider
         this.optOutEnabled = !!res.opt_out_enabled
         this.agents = res.agents || []
+        this.extensions = res.extensions || {}
         this.hasAccess = res.has_access !== false
         this.loaded = true
       } catch {

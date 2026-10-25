@@ -101,6 +101,7 @@ def test_whoami_hides_staff_list_from_non_agents(frappe):
 	result = api.whoami()
 	assert result["has_access"] is False
 	assert result["agents"] == []
+	assert result["extensions"] == {}
 	frappe.get_all.assert_not_called()
 
 	frappe.get_roles.return_value = ["Whatsnext User"]
@@ -108,3 +109,23 @@ def test_whoami_hides_staff_list_from_non_agents(frappe):
 	result = api.whoami()
 	assert result["has_access"] is True
 	assert result["agents"] == [{"name": "agent@example.com", "full_name": "Agent"}]
+
+
+def test_extensions_come_from_hooks_and_respect_enabled(frappe):
+	from unittest.mock import MagicMock
+
+	from whatsnext.whatsnext import api
+
+	frappe.get_hooks = MagicMock(return_value=[
+		{"feature": "smart_replies", "enabled": "addon.on", "options": "addon.options", "suggest": "addon.suggest"},
+		{"feature": "switched_off", "enabled": "addon.off", "suggest": "addon.x"},
+		{"feature": "broken", "enabled": "addon.boom", "suggest": "addon.y"},
+		{"no_feature": True},
+	])
+
+	def boom():
+		raise RuntimeError("bad extension")
+
+	frappe.get_attr = MagicMock(side_effect=lambda path: {"addon.on": lambda: True, "addon.off": lambda: False, "addon.boom": boom}[path])
+	assert api.get_extensions() == {"smart_replies": {"options": "addon.options", "suggest": "addon.suggest"}}
+	frappe.log_error.assert_called_once()
