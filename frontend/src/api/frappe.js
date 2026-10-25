@@ -1,3 +1,5 @@
+import { errorMessage } from '@/lib/errors'
+
 let csrfToken = null
 
 // Frappe sets a plain, readable (non-HttpOnly) user_id cookie on every
@@ -67,10 +69,9 @@ export async function call(method, params = {}, httpMethod = 'POST') {
   if (!res.ok) {
     let detail = ''
     try {
-      const errJson = await res.json()
-      detail = errJson.exception || errJson.message || JSON.stringify(errJson)
+      detail = errorMessage(await res.clone().json(), res.status)
     } catch {
-      detail = await res.text()
+      detail = (await res.text()).slice(0, 300)
     }
     throw new Error(detail || `Request failed: ${res.status}`)
   }
