@@ -20,6 +20,8 @@ Most WhatsApp-for-ERPNext tools stop at "send a templated message when X happens
 - Incoming text, images, video, audio, documents, stickers, locations, shared contacts, reactions and **template quick-reply button taps**
 - **Reply to a specific message** (quoted on the customer's phone with Meta), and see which message a customer replied to
 - **Share a location** (current position, a pasted Maps link or coordinates) or a **contact card** from ERPNext Contacts
+- **Internal notes** on a chat — visible to the team only, never sent to the customer
+- **Save an unknown number** as an ERPNext Contact (optionally linked to a Customer) or create a **Lead**, right from the chat
 - **Quick replies** — shared saved answers, inserted with ⚡ or by typing `/shortcut`; `{name}` fills the customer's first name
 - **Read receipts** — customers see blue ticks when an agent opens the chat (Meta)
 - **Away message** — automatic reply outside business hours / on holidays, at most once per cooldown

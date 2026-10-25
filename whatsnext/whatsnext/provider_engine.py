@@ -343,7 +343,14 @@ class TwilioProvider(BaseProvider):
 
 	@staticmethod
 	def _wa(number: str) -> str:
-		return number if number.startswith("whatsapp:") else f"whatsapp:{number}"
+		"""Twilio needs E.164 with the leading "+" (whatsapp:+919876543210).
+		Numbers are stored digits-only (919876543210), and sending those
+		as-is made Twilio reject every message as an invalid number."""
+		number = (number or "").strip()
+		if number.startswith("whatsapp:"):
+			number = number[len("whatsapp:"):]
+		digits = "".join(ch for ch in number if ch.isdigit())
+		return f"whatsapp:+{digits}" if digits else f"whatsapp:{number}"
 
 	def _post(self, data: dict) -> dict:
 		resp = requests.post(self.base_url, data=data, auth=(self.account_sid, self.auth_token), timeout=30)

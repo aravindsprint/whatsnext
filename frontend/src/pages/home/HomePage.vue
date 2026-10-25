@@ -66,20 +66,86 @@ function dateSeparatorLabel(dateStr) {
   return d.toLocaleDateString([], { day: 'numeric', month: 'long', year: 'numeric' })
 }
 
+// Messages and internal notes in one timeline, by time. While older
+// messages are still unloaded, notes older than the oldest loaded message
+// wait for them, so they never appear out of context at the top.
 const timelineItems = computed(() => {
+  const messages = chat.activeMessages
+  const oldest = messages[0]?.creation
+  const notes = chat.activeNotes.filter((n) => !chat.activeHasOlder || !oldest || n.creation >= oldest)
+  const entries = [
+    ...messages.map((m) => ({ kind: 'message', at: m.creation, data: m })),
+    ...notes.map((n) => ({ kind: 'note', at: n.creation, data: n })),
+  ].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
+
   const items = []
   let lastDateKey = null
-  for (const m of chat.activeMessages) {
-    const d = parseFrappeDate(m.creation)
+  for (const e of entries) {
+    const d = parseFrappeDate(e.at)
     const dateKey = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
     if (dateKey !== lastDateKey) {
-      items.push({ type: 'separator', key: `sep-${dateKey}`, label: dateSeparatorLabel(m.creation) })
+      items.push({ type: 'separator', key: `sep-${dateKey}`, label: dateSeparatorLabel(e.at) })
       lastDateKey = dateKey
     }
-    items.push({ type: 'message', key: m.name, message: m })
+    if (e.kind === 'note') items.push({ type: 'note', key: `note-${e.data.name}`, note: e.data })
+    else items.push({ type: 'message', key: e.data.name, message: e.data })
   }
   return items
 })
+
+// --- Internal notes ------------------------------------------------------
+const noteMode = ref(false)
+function canDeleteNote(n) {
+  return n.owner === auth.user || auth.isSystemManager
+}
+function deleteNote(n) {
+  if (!confirm('Delete this note?')) return
+  runAction(() => chat.deleteNote(n.name))
+}
+
+// --- Save number as Contact / Lead ---------------------------------------
+const showLinkForm = ref(null) // null | 'contact' | 'lead'
+const linkForm = ref({ firstName: '', lastName: '', customer: '', companyName: '' })
+const customerMatches = ref([])
+const linkBusy = ref(false)
+const linkError = ref(null)
+
+function openLinkForm(kind) {
+  const [first, ...rest] = (displayName.value && displayName.value !== activeConversationNumber.value ? displayName.value : '').split(' ')
+  linkForm.value = { firstName: first || '', lastName: rest.join(' '), customer: '', companyName: '' }
+  customerMatches.value = []
+  linkError.value = null
+  showLinkForm.value = kind
+}
+
+let customerTimer
+function onCustomerInput(e) {
+  linkForm.value.customer = e.target.value
+  clearTimeout(customerTimer)
+  customerTimer = setTimeout(async () => {
+    try {
+      customerMatches.value = linkForm.value.customer
+        ? await call('whatsnext.whatsnext.api.search_customers', { search: linkForm.value.customer }, 'GET')
+        : []
+    } catch {
+      customerMatches.value = []
+    }
+  }, 250)
+}
+
+async function submitLinkForm() {
+  linkBusy.value = true
+  linkError.value = null
+  try {
+    if (showLinkForm.value === 'lead') await chat.createLead(linkForm.value)
+    else await chat.saveAsContact(linkForm.value)
+    showLinkForm.value = null
+  } catch (e) {
+    linkError.value = e.message
+  } finally {
+    linkBusy.value = false
+  }
+}
 
 async function openMediaPanel() {
   showMediaPanel.value = true
@@ -457,6 +523,18 @@ function onMessagesScroll(e) {
 async function send() {
   const text = draft.value.trim()
   if (!text || !activeConversationNumber.value) return
+  if (noteMode.value) {
+    draft.value = ''
+    composerError.value = null
+    try {
+      await chat.addNote(text)
+      scrollToBottom()
+    } catch (e) {
+      if (!draft.value) draft.value = text
+      composerError.value = e.message
+    }
+    return
+  }
   const scheduledTime = showSchedule.value && scheduleAt.value ? toFrappeDatetime(scheduleAt.value) : undefined
   if (showSchedule.value && !scheduledTime) {
     composerError.value = 'Pick a date and time to schedule, or close the schedule option.'
@@ -637,6 +715,16 @@ async function sendNewChat(payload) {
             <div v-if="item.type === 'separator'" class="wn-date-pill-row">
               <span class="wn-date-pill">{{ item.label }}</span>
             </div>
+            <div v-else-if="item.type === 'note'" class="wn-note-row">
+              <div class="wn-note">
+                <div class="wn-note-head">
+                  <span>📝 Note · {{ item.note.author || item.note.owner }}</span>
+                  <span>{{ parseFrappeDate(item.note.creation).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }}</span>
+                  <button v-if="canDeleteNote(item.note)" type="button" class="wn-note-del" title="Delete note" @click="deleteNote(item.note)">✕</button>
+                </div>
+                <p>{{ item.note.note }}</p>
+              </div>
+            </div>
             <div v-else :id="`wn-msg-${item.message.name}`" class="wn-msg-wrap">
               <MessageBubble :message="item.message" @reply="startReply" @jump="jumpToMessage" />
             </div>
@@ -735,9 +823,13 @@ async function sendNewChat(payload) {
               <span class="wn-qr-text">{{ r.message }}</span>
             </button>
           </div>
-          <input v-model="draft" type="text" :disabled="!windowOpen" @keydown="onDraftKeydown"
-                 :placeholder="windowOpen ? 'Type a message' : 'Templates only — the customer hasn’t written in 24 hours'" />
-          <button type="submit" :disabled="!windowOpen">{{ showSchedule ? 'Schedule' : 'Send' }}</button>
+          <button type="button" class="wn-tpl-btn" :class="{ active: noteMode }" @click="noteMode = !noteMode"
+                  :title="noteMode ? 'Back to messaging the customer' : 'Write an internal note (not sent to the customer)'">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+          </button>
+          <input v-model="draft" type="text" :class="{ 'wn-note-input': noteMode }" :disabled="!windowOpen && !noteMode" @keydown="onDraftKeydown"
+                 :placeholder="noteMode ? 'Internal note — only your team sees this' : (windowOpen ? 'Type a message' : 'Templates only — the customer hasn’t written in 24 hours')" />
+          <button type="submit" :class="{ 'wn-note-send': noteMode }" :disabled="!windowOpen && !noteMode">{{ noteMode ? 'Add note' : (showSchedule ? 'Schedule' : 'Send') }}</button>
         </form>
       </template>
 
@@ -765,7 +857,17 @@ async function sendNewChat(payload) {
       <div class="wn-info-row">
         <span class="wn-info-label">Contact</span>
         <a v-if="info?.contact" :href="`/app/contact/${encodeURIComponent(info.contact)}`" target="_blank">{{ info.contact }}</a>
-        <span v-else>—</span>
+        <template v-else>
+          <span>Not saved in ERPNext</span>
+          <div class="wn-link-actions">
+            <button class="ghost small" @click="openLinkForm('contact')">Save as Contact</button>
+            <button class="ghost small" @click="openLinkForm('lead')">Create Lead</button>
+          </div>
+        </template>
+      </div>
+      <div v-if="info?.lead" class="wn-info-row">
+        <span class="wn-info-label">Lead</span>
+        <a :href="`/app/lead/${encodeURIComponent(info.lead)}`" target="_blank">{{ info.lead }}</a>
       </div>
       <div class="wn-info-row">
         <span class="wn-info-label">Assigned to</span>
@@ -850,6 +952,39 @@ async function sendNewChat(payload) {
           <TemplateSendForm :template="tplSelected" :sending="tplSending" @back="tplSelected = null" @send="sendTplToActiveConversation" />
         </template>
         <p v-if="tplError" class="wn-error">{{ tplError }}</p>
+      </div>
+    </div>
+
+    <div v-if="showLinkForm" class="wn-modal-backdrop" @click.self="showLinkForm = null">
+      <div class="wn-modal">
+        <h3>{{ showLinkForm === 'lead' ? 'Create a Lead' : 'Save as Contact' }}</h3>
+        <p class="wn-hint">For {{ activeConversationNumber }} — this chat will be linked to it in ERPNext.</p>
+        <div class="wn-loc-row">
+          <div><label>First name</label><input v-model="linkForm.firstName" type="text" /></div>
+          <div><label>Last name</label><input v-model="linkForm.lastName" type="text" /></div>
+        </div>
+        <template v-if="showLinkForm === 'lead'">
+          <label>Company (optional)</label>
+          <input v-model="linkForm.companyName" type="text" />
+        </template>
+        <template v-else>
+          <label>Customer (optional)</label>
+          <div class="wn-ac">
+            <input :value="linkForm.customer" type="text" placeholder="Link to an existing customer" @input="onCustomerInput" />
+            <div v-if="customerMatches.length" class="wn-ac-list">
+              <button v-for="c in customerMatches" :key="c.name" type="button" @click="linkForm.customer = c.name; customerMatches = []">
+                {{ c.customer_name }}<span v-if="c.customer_name !== c.name" class="wn-muted-small"> · {{ c.name }}</span>
+              </button>
+            </div>
+          </div>
+        </template>
+        <p v-if="linkError" class="wn-error">{{ linkError }}</p>
+        <div class="wn-modal-actions">
+          <button class="ghost" @click="showLinkForm = null">Cancel</button>
+          <button class="primary" :disabled="linkBusy || !linkForm.firstName.trim()" @click="submitLinkForm">
+            {{ linkBusy ? 'Saving…' : (showLinkForm === 'lead' ? 'Create Lead' : 'Save Contact') }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -1054,6 +1189,18 @@ async function sendNewChat(payload) {
 .wn-msg-wrap { border-radius: 14px; transition: background 0.4s; }
 .wn-msg-wrap.wn-flash { background: rgba(22, 163, 148, 0.18); }
 .wn-loc-row { display: flex; gap: 10px; }
+.wn-note-row { display: flex; justify-content: center; margin: 8px 0; }
+.wn-note { max-width: 80%; background: #fff8db; border: 1px dashed #e6c766; border-radius: 10px; padding: 6px 10px; font-size: 13px; }
+.wn-note p { margin: 2px 0 0; white-space: pre-wrap; word-break: break-word; }
+.wn-note-head { display: flex; gap: 8px; align-items: center; font-size: 11px; color: #8a6d00; font-weight: 600; }
+.wn-note-del { background: none; border: none; color: #8a6d00; font-size: 11px; cursor: pointer; padding: 0 2px; margin-left: auto; }
+.wn-note-input { background: #fffbea !important; border-color: #e6c766 !important; }
+.wn-composer button.wn-note-send { background: #b38600; }
+.wn-link-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+.wn-ac { position: relative; }
+.wn-ac-list { position: absolute; left: 0; right: 0; top: 100%; background: white; border: 1px solid var(--wn-border); border-radius: 8px; z-index: 5; max-height: 200px; overflow-y: auto; }
+.wn-ac-list button { display: block; width: 100%; text-align: left; background: none; border: none; padding: 8px 10px; font-size: 13px; }
+.wn-ac-list button:hover { background: var(--wn-bg); }
 .wn-loc-row > div { flex: 1; min-width: 0; }
 .wn-composer input { flex: 1; min-width: 0; padding: 10px 14px; border-radius: 20px; border: 1px solid var(--wn-border); font-size: 14px; }
 .wn-composer input:disabled { background: var(--wn-bg); }

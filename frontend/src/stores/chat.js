@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { call } from '@/api/frappe'
 import { cacheConversations, getCachedConversations, cacheMessages, getCachedMessages } from '@/db'
-import { onNewMessage, onMessageUpdate } from '@/realtime'
+import { onNewMessage, onMessageUpdate, onNote } from '@/realtime'
 
 const API = 'whatsnext.whatsnext.api'
 const PAGE_SIZE = 50
@@ -14,6 +14,7 @@ export const useChatStore = defineStore('chat', {
     // conversation_id -> true while older pages may still exist
     hasOlderByConversation: {},
     infoByConversation: {},
+    notesByConversation: {},
     loadingConversations: false,
     loadingMessages: false,
     loadingOlder: false,
@@ -26,6 +27,7 @@ export const useChatStore = defineStore('chat', {
   getters: {
     activeMessages: (state) => state.messagesByConversation[state.activeConversationId] || [],
     activeInfo: (state) => state.infoByConversation[state.activeConversationId] || null,
+    activeNotes: (state) => state.notesByConversation[state.activeConversationId] || [],
     activeHasOlder: (state) => !!state.hasOlderByConversation[state.activeConversationId],
   },
   actions: {
@@ -70,6 +72,7 @@ export const useChatStore = defineStore('chat', {
       this.loadingMessages = true
       this.messagesByConversation[conversationId] = await getCachedMessages(conversationId)
       this.loadInfo(conversationId)
+      this.loadNotes(conversationId)
       try {
         await this.refreshMessages(conversationId)
         await call(`${API}.mark_as_read`, { conversation_id: conversationId })
@@ -116,6 +119,42 @@ export const useChatStore = defineStore('chat', {
       } catch {
         /* non-fatal: header just shows less */
       }
+    },
+    async loadNotes(conversationId = this.activeConversationId) {
+      if (!conversationId) return
+      try {
+        this.notesByConversation[conversationId] = await call(`${API}.get_notes`, { conversation_id: conversationId }, 'GET')
+      } catch {
+        /* non-fatal */
+      }
+    },
+    async addNote(note) {
+      const id = this.activeConversationId
+      const saved = await call(`${API}.add_note`, { conversation_id: id, note })
+      const list = this.notesByConversation[id] || []
+      if (!list.some((n) => n.name === saved.name)) this.notesByConversation[id] = [...list, saved]
+      return saved
+    },
+    async deleteNote(name) {
+      const id = this.activeConversationId
+      await call(`${API}.delete_note`, { name })
+      this.notesByConversation[id] = (this.notesByConversation[id] || []).filter((n) => n.name !== name)
+    },
+    async saveAsContact({ firstName, lastName, customer }) {
+      const id = this.activeConversationId
+      this.infoByConversation[id] = await call(`${API}.save_number_as_contact`, {
+        conversation_id: id, first_name: firstName, last_name: lastName, customer: customer || undefined,
+      })
+      this.loadConversations()
+      return this.infoByConversation[id]
+    },
+    async createLead({ firstName, lastName, companyName }) {
+      const id = this.activeConversationId
+      this.infoByConversation[id] = await call(`${API}.create_lead_from_chat`, {
+        conversation_id: id, first_name: firstName, last_name: lastName, company_name: companyName,
+      })
+      this.loadConversations()
+      return this.infoByConversation[id]
     },
     async assign(user) {
       const id = this.activeConversationId
@@ -227,7 +266,11 @@ export const useChatStore = defineStore('chat', {
         const msg = list?.find((m) => m.name === evt.name)
         if (msg) msg.status = evt.status
       })
-      this._unsubscribeRealtime = () => { offNew(); offUpdate() }
+      // Notes added or removed by teammates.
+      const offNote = onNote((evt) => {
+        if (evt.conversation_id === this.activeConversationId) this.loadNotes(evt.conversation_id)
+      })
+      this._unsubscribeRealtime = () => { offNew(); offUpdate(); offNote() }
     },
   },
 })

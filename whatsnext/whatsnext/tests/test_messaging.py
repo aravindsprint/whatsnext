@@ -163,6 +163,31 @@ class TestMessaging(FrappeTestCase):
 		self.assertIn("Recipient not on WhatsApp", error)
 
 
+	def test_notes_are_internal(self):
+		from whatsnext.whatsnext.api import add_note, get_notes
+
+		number = _number(10)
+		self._incoming(number, "Hi", "wamid.in10")
+		self.post.reset_mock()
+		add_note(conversation_id=number, note="Called him, sending quote tomorrow")
+		self.assertEqual([n.note for n in get_notes(conversation_id=number)], ["Called him, sending quote tomorrow"])
+		self.post.assert_not_called()  # nothing went to WhatsApp
+		for n in frappe.get_all("Whatsnext Conversation Note", filters={"conversation_id": number}, pluck="name"):
+			frappe.delete_doc("Whatsnext Conversation Note", n, force=True, ignore_permissions=True)
+
+	def test_save_number_as_contact_links_chat(self):
+		from whatsnext.whatsnext.api import save_number_as_contact
+
+		number = _number(11)
+		self._incoming(number, "Hi, I need a quote", "wamid.in11")
+		info = save_number_as_contact(conversation_id=number, first_name="WN Test", last_name="Buyer")
+		self.addCleanup(frappe.delete_doc, "Contact", info["contact"], force=True, ignore_permissions=True)
+		self.assertTrue(info["contact"])
+		self.assertEqual(frappe.db.get_value("Whatsnext Message", {"conversation_id": number}, "contact"), info["contact"])
+		with self.assertRaises(frappe.ValidationError):
+			save_number_as_contact(conversation_id=number, first_name="Again")
+
+
 class TestCampaign(FrappeTestCase):
 	def setUp(self):
 		patch("whatsnext.whatsnext.provider_engine.requests.post", return_value=_meta_ok()).start()

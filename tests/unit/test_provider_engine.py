@@ -123,10 +123,29 @@ def test_twilio_content_variables_body_only(frappe, monkeypatch):
 	data = post.call_args.kwargs["data"]
 	assert data["ContentSid"] == "HX123"
 	assert json.loads(data["ContentVariables"]) == {"1": "a"}
-	assert data["To"] == "whatsapp:919876543210"
+	assert data["To"] == "whatsapp:+919876543210"
 
 
 def test_disabled_provider_refuses(frappe):
 	frappe.settings.meta_enabled = 0
 	with pytest.raises(frappe.ValidationError):
 		pe.MetaProvider(frappe.settings)
+
+
+@pytest.mark.parametrize("raw,expected", [
+	("919876543210", "whatsapp:+919876543210"),   # how numbers are stored
+	("+919876543210", "whatsapp:+919876543210"),
+	("whatsapp:+14155238886", "whatsapp:+14155238886"),
+	("whatsapp:14155238886", "whatsapp:+14155238886"),
+	("+1 (415) 523-8886", "whatsapp:+14155238886"),
+])
+def test_twilio_numbers_are_e164(raw, expected):
+	assert pe.TwilioProvider._wa(raw) == expected
+
+
+def test_twilio_text_send_uses_plus(frappe, monkeypatch):
+	frappe.settings.twilio_enabled = 1
+	post = MagicMock(return_value=FakeResponse(201, {"sid": "SM1"}))
+	monkeypatch.setattr(pe.requests, "post", post)
+	pe.TwilioProvider(frappe.settings).send_text("919876543210", "hi")
+	assert post.call_args.kwargs["data"]["To"] == "whatsapp:+919876543210"

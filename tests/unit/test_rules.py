@@ -88,3 +88,23 @@ def test_require_app_user_allows_agents_and_internal_calls(frappe):
 	frappe.get_roles.return_value = ["Customer"]
 	with pytest.raises(frappe.PermissionError):
 		permissions.require_app_user()
+
+
+def test_whoami_hides_staff_list_from_non_agents(frappe):
+	from unittest.mock import MagicMock
+
+	from whatsnext.whatsnext import api
+
+	frappe.get_all = MagicMock(return_value=["agent@example.com"])
+	frappe.get_roles.return_value = ["Customer"]
+	frappe.session.user = "customer@example.com"
+	result = api.whoami()
+	assert result["has_access"] is False
+	assert result["agents"] == []
+	frappe.get_all.assert_not_called()
+
+	frappe.get_roles.return_value = ["Whatsnext User"]
+	frappe.get_all = MagicMock(side_effect=[["agent@example.com"], [{"name": "agent@example.com", "full_name": "Agent"}]])
+	result = api.whoami()
+	assert result["has_access"] is True
+	assert result["agents"] == [{"name": "agent@example.com", "full_name": "Agent"}]

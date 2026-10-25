@@ -4,7 +4,15 @@ import App from './App.vue'
 import router from './router'
 import './style.css'
 
-createApp(App).use(createPinia()).use(router).mount('#app')
+import { getSessionUser, isLoggedIn } from './api/frappe'
+import { ensureCacheOwner } from './db'
+
+// Before anything reads the offline cache: drop it if it belongs to a
+// different user than the one now logged in.
+const ready = isLoggedIn() ? ensureCacheOwner(getSessionUser()) : Promise.resolve()
+ready.finally(() => {
+  createApp(App).use(createPinia()).use(router).mount('#app')
+})
 
 // Manual service worker registration — vite-plugin-pwa's normal
 // auto-injected registration script never runs here, because
