@@ -690,7 +690,7 @@ async function sendNewChat(payload) {
               <span v-if="info?.opted_out" class="wn-badge red">Opted out</span>
             </div>
           </div>
-          <button v-if="!info?.assigned_to" class="ghost small wn-hide-mobile" :disabled="actionBusy" @click="assignToMe">Assign to me</button>
+          <button v-if="!info?.assigned_to" class="ghost small wn-hide-narrow" :disabled="actionBusy" @click="assignToMe">Assign to me</button>
           <button class="ghost small" :disabled="actionBusy" @click="toggleClosed">
             {{ info?.status === 'Closed' ? 'Reopen' : 'Close' }}
           </button>
@@ -816,8 +816,8 @@ async function sendNewChat(payload) {
             </button>
           </template>
           <input ref="fileInputEl" type="file" class="wn-hidden-file-input" @change="onFileSelected" />
-          <select v-if="auth.providers.length > 1" v-model="chat.provider" class="wn-provider-select" title="Send via">
-            <option value="">Default ({{ auth.defaultProvider }})</option>
+          <select v-if="auth.providers.length > 1" v-model="chat.provider" class="wn-provider-select" :title="`Send via (default: ${auth.defaultProvider})`" aria-label="Send via">
+            <option value="">Default</option>
             <option v-for="p in auth.providers" :key="p" :value="p">{{ p }}</option>
           </select>
           <div v-if="slashMatches.length && windowOpen" class="wn-slash-popup">
@@ -1108,6 +1108,8 @@ async function sendNewChat(payload) {
 <style scoped>
 .wn-chat-layout {
   display: flex;
+  flex: 1;
+  min-height: 0;
   height: 100%;
   background: white;
   border-radius: var(--wn-radius);
@@ -1115,7 +1117,7 @@ async function sendNewChat(payload) {
   box-shadow: var(--wn-shadow);
   position: relative;
 }
-.wn-conv-pane { width: 320px; flex-shrink: 0; border-right: 1px solid var(--wn-border); display: flex; flex-direction: column; }
+.wn-conv-pane { width: 320px; flex-shrink: 0; border-right: 1px solid var(--wn-border); display: flex; flex-direction: column; min-height: 0; }
 .wn-conv-header { padding: 10px 12px; border-bottom: 1px solid var(--wn-border); display: flex; flex-direction: column; gap: 8px; }
 .wn-new-chat-btn { width: 100%; background: var(--wn-teal); color: white; border: none; padding: 9px; border-radius: 8px; font-weight: 600; font-size: 13px; }
 .wn-conv-search { width: 100%; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--wn-border); font-size: 12.5px; }
@@ -1125,10 +1127,12 @@ async function sendNewChat(payload) {
 .wn-filter-tabs { display: flex; gap: 4px; }
 .wn-filter-tabs button { flex: 1; padding: 5px 0; border: none; background: var(--wn-bg); border-radius: 6px; font-size: 11px; color: var(--wn-text-muted); }
 .wn-filter-tabs button.active { background: var(--wn-teal); color: white; font-weight: 600; }
-.wn-chat-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.wn-chat-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--wn-border); }
+/* The chat pane is a size container: its layout follows its own width
+   (which depends on the sidebar and chat list), not the window's. */
+.wn-chat-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; container-type: inline-size; container-name: chatpane; }
+.wn-chat-header { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--wn-border); min-height: 60px; }
 .wn-chat-header-name { flex: 1; min-width: 0; }
-.wn-back-btn { display: none; }
+.wn-chat-header .wn-back-btn { display: none; }
 .wn-info-btn { background: none; border: none; color: var(--wn-text-muted); cursor: pointer; padding: 6px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; }
 .wn-info-btn:hover { color: var(--wn-teal); }
 .wn-info-panel { position: absolute; top: 0; right: 0; bottom: 0; width: 300px; max-width: 100%; background: white; box-shadow: -2px 0 8px rgba(0,0,0,0.08); padding: 16px; z-index: 40; overflow-y: auto; }
@@ -1155,7 +1159,7 @@ async function sendNewChat(payload) {
 .wn-chat-phone { font-size: 12px; color: var(--wn-text-muted); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .wn-messages { flex: 1; overflow-y: auto; padding: 16px; background: var(--wn-bg); }
 .wn-older-row { display: flex; justify-content: center; margin-bottom: 8px; }
-.wn-date-pill-row { display: flex; justify-content: center; margin: 12px 0; position: sticky; top: 0; z-index: 1; }
+.wn-date-pill-row { display: flex; justify-content: center; margin: 12px 0; }
 .wn-date-pill {
   background: #e9edef;
   color: #54656f;
@@ -1172,7 +1176,9 @@ async function sendNewChat(payload) {
 .wn-link { background: none; border: none; color: var(--wn-blue); padding: 0; font-size: inherit; text-decoration: underline; }
 .wn-schedule-row { display: flex; align-items: center; gap: 8px; padding: 8px 12px 0; font-size: 12.5px; }
 .wn-schedule-row input { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--wn-border); }
-.wn-composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--wn-border); align-items: center; position: relative; }
+.wn-composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--wn-border); align-items: center; position: relative; flex-wrap: nowrap; }
+.wn-composer > input[type="text"] { order: 10; }
+.wn-composer > button[type="submit"] { order: 11; flex-shrink: 0; }
 .wn-qr-popup, .wn-slash-popup { position: absolute; bottom: 44px; left: 0; background: white; border-radius: 10px; box-shadow: 0 4px 16px rgba(15,61,62,0.16); padding: 6px; z-index: 30; width: 320px; max-width: 86vw; max-height: 320px; overflow-y: auto; }
 .wn-slash-popup { bottom: 60px; left: 12px; }
 .wn-qr-search { width: 100%; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--wn-border); font-size: 12.5px; margin-bottom: 4px; box-sizing: border-box; }
@@ -1195,7 +1201,7 @@ async function sendNewChat(payload) {
 .wn-note-row { display: flex; justify-content: center; margin: 8px 0; }
 .wn-note { max-width: 80%; background: #fff8db; border: 1px dashed #e6c766; border-radius: 10px; padding: 6px 10px; font-size: 13px; }
 .wn-note p { margin: 2px 0 0; white-space: pre-wrap; word-break: break-word; }
-.wn-note-head { display: flex; gap: 8px; align-items: center; font-size: 11px; color: #8a6d00; font-weight: 600; }
+.wn-note-head { display: flex; gap: 8px; align-items: center; font-size: 11px; color: #8a6d00; font-weight: 600; white-space: nowrap; }
 .wn-note-del { background: none; border: none; color: #8a6d00; font-size: 11px; cursor: pointer; padding: 0 2px; margin-left: auto; }
 .wn-note-input { background: #fffbea !important; border-color: #e6c766 !important; }
 .wn-composer button.wn-note-send { background: #b38600; }
@@ -1241,21 +1247,54 @@ async function sendNewChat(payload) {
 .wn-muted { color: var(--wn-text-muted); font-size: 13px; padding: 10px 0; }
 .wn-error { color: var(--wn-red); font-size: 12.5px; margin-top: 10px; }
 
-/* Phones: one pane at a time — the list, or the open chat with a back
-   button. (Previously the chat pane was simply hidden below 768px, so a
-   conversation could never be opened on a phone.) */
-@media (max-width: 768px) {
+/* Short screens (phone in landscape): give the messages the height. */
+@media (max-height: 500px) {
+  .wn-chat-header { min-height: 0; padding: 6px 10px; }
+  .wn-window-hint { display: none; }
+  .wn-scheduled-strip { padding: 3px 12px; }
+  .wn-messages { padding: 8px 12px; }
+}
+
+/* Wide screens: a roomier chat list. */
+@media (min-width: 1600px) {
+  .wn-conv-pane { width: 360px; }
+}
+/* Tablets and small laptops: slimmer chat list, so the open chat keeps room. */
+@media (max-width: 1199px) {
+  .wn-conv-pane { width: 280px; }
+}
+
+/* Narrow chat (phones, tablets in portrait, or a narrow window): tools on
+   one row, the message box and Send on their own row below. */
+@container chatpane (max-width: 600px) {
+  .wn-composer { flex-wrap: wrap; padding: 8px; gap: 6px; }
+  .wn-composer > input[type="text"] { flex: 1 1 calc(100% - 96px); }
+  .wn-composer > button[type="submit"] { padding: 10px 14px; }
+  .wn-provider-select { max-width: 104px; padding: 7px 6px; }
+  .wn-tpl-btn { padding: 8px 10px !important; }
+  .wn-chat-header { padding: 8px 10px; gap: 6px; }
+  .wn-chat-header .wn-hide-narrow { display: none !important; }
+  .wn-messages { padding: 12px 10px; }
+  .wn-window-banner { flex-direction: column; align-items: stretch; }
+  .wn-schedule-row { flex-wrap: wrap; }
+}
+
+/* Phones (and phones held sideways — short screens): one pane at a time,
+   the list or the open chat with a back button. */
+@media (max-width: 768px), (max-height: 500px) and (max-width: 1024px) {
+  .wn-chat-layout { border-radius: 0; box-shadow: none; }
   .wn-conv-pane { width: 100%; border-right: none; }
   .wn-chat-pane { display: none; }
   .wn-chat-layout.has-active .wn-conv-pane { display: none; }
   .wn-chat-layout.has-active .wn-chat-pane { display: flex; }
-  .wn-back-btn { display: inline-flex; }
+  .wn-chat-header .wn-back-btn { display: inline-flex; }
   .wn-hide-mobile { display: none !important; }
-  .wn-chat-header { padding: 8px 10px; gap: 6px; }
-  .wn-composer { padding: 8px; gap: 6px; }
-  .wn-composer button[type="submit"] { padding: 10px 14px; }
-  .wn-filter-tabs { overflow-x: auto; }
-  .wn-filter-tabs button { flex: 0 0 auto; padding: 5px 10px; }
-  .wn-window-banner { flex-direction: column; align-items: stretch; }
+  .wn-filter-tabs { overflow-x: auto; scrollbar-width: none; }
+  .wn-filter-tabs::-webkit-scrollbar { display: none; }
+  .wn-filter-tabs button { flex: 0 0 auto; padding: 6px 12px; font-size: 12px; }
+  .wn-conv-header { padding: 10px; }
+  .wn-info-panel { width: 100%; box-shadow: none; padding: 14px 16px max(16px, env(safe-area-inset-bottom)); }
+  .wn-composer { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .wn-note { max-width: 92%; }
 }
 </style>

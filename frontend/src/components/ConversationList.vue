@@ -48,7 +48,7 @@ function formatTime(value) {
 </template>
 
 <style scoped>
-.wn-conv-list { display: flex; flex-direction: column; overflow-y: auto; height: 100%; }
+.wn-conv-list { display: flex; flex-direction: column; overflow-y: auto; flex: 1; min-height: 0; }
 .wn-conv-item { display: flex; gap: 10px; padding: 12px 14px; cursor: pointer; border-bottom: 1px solid var(--wn-border); }
 .wn-conv-item:hover, .wn-conv-item.active { background: var(--wn-teal-light); }
 .wn-avatar {

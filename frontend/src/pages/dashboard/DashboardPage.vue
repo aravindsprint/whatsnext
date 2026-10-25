@@ -90,26 +90,36 @@ const weeklyPoints = computed(() =>
 
 <style scoped>
 .wn-dashboard { display: flex; flex-direction: column; gap: 20px; }
-.wn-stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
-.wn-quick-actions { display: flex; gap: 10px; }
+.wn-stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.wn-quick-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .wn-quick-actions button {
   padding: 10px 16px; border-radius: 10px; border: none; background: var(--wn-teal); color: white;
   font-weight: 600; font-size: 13px;
 }
 .wn-quick-actions button.ghost { background: white; color: var(--wn-teal); border: 1px solid var(--wn-teal); }
-.wn-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.wn-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .wn-card { background: white; border-radius: var(--wn-radius); box-shadow: var(--wn-shadow); padding: 18px; }
 .wn-card h3 { margin: 0 0 14px; font-size: 14px; color: var(--wn-navy); }
 .wn-simple-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; font-size: 13px; }
-.wn-simple-list li { display: flex; justify-content: space-between; gap: 10px; }
+.wn-simple-list li { display: flex; justify-content: space-between; align-items: center; gap: 10px; min-width: 0; }
+.wn-simple-list li > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wn-status { flex-shrink: 0; }
 .wn-status { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; background: #eef2f2; }
 .wn-status.delivered, .wn-status.read { background: #e6f7f4; color: var(--wn-teal); }
 .wn-status.failed { background: #fee2e2; color: var(--wn-red); }
 .wn-status.pending, .wn-status.queued { background: #fef3c7; color: var(--wn-amber); }
 .wn-muted { color: var(--wn-text-muted); font-size: 13px; }
 
+@media (max-width: 1100px) {
+  .wn-stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (max-width: 900px) {
-  .wn-stats-grid { grid-template-columns: repeat(2, 1fr); }
-  .wn-grid-2 { grid-template-columns: 1fr; }
+  .wn-grid-2 { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 768px) {
+  .wn-dashboard { gap: 14px; }
+  .wn-stats-grid { gap: 10px; }
+  .wn-quick-actions button { flex: 1 1 calc(50% - 5px); }
+  .wn-card { padding: 14px; }
 }
 </style>

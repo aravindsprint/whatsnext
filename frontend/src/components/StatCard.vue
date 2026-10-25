@@ -26,6 +26,12 @@ defineProps({
   display: flex;
   align-items: center;
   gap: 14px;
+  min-width: 0;
+}
+.wn-stat-card > div:last-child { min-width: 0; }
+@media (max-width: 768px) {
+  .wn-stat-card { padding: 12px; gap: 10px; }
+  .wn-stat-icon { width: 34px !important; height: 34px !important; font-size: 16px !important; }
 }
 .wn-stat-icon {
   width: 40px; height: 40px; border-radius: 10px;
