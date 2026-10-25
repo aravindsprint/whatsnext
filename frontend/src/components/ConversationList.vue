@@ -1,8 +1,8 @@
 <script setup>
-defineProps({ conversations: Array, activeId: String })
 import { parseFrappeDate } from '@/lib/date'
 
-const emit = defineEmits(['select'])
+defineProps({ conversations: Array, activeId: String, hasMore: Boolean, loadingMore: Boolean })
+const emit = defineEmits(['select', 'load-more'])
 
 function initials(user) {
   return (user || '').split('@')[0].split(/[._-]/).filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join('')
@@ -40,6 +40,9 @@ function formatTime(value) {
         </div>
       </div>
     </div>
+    <div v-if="hasMore" class="wn-load-more">
+      <button type="button" :disabled="loadingMore" @click="emit('load-more')">{{ loadingMore ? 'Loading…' : 'Load more chats' }}</button>
+    </div>
     <div v-if="!conversations.length" class="wn-empty">No conversations yet</div>
   </div>
 </template>
@@ -63,4 +66,6 @@ function formatTime(value) {
 .wn-unread-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--wn-teal); flex-shrink: 0; }
 .wn-empty { padding: 24px; text-align: center; color: var(--wn-text-muted); font-size: 13px; }
 .wn-assignee { font-size: 9.5px; font-weight: 700; background: var(--wn-teal-light); color: #0f8c72; border-radius: 999px; padding: 1px 5px; flex-shrink: 0; }
+.wn-load-more { display: flex; justify-content: center; padding: 10px; }
+.wn-load-more button { background: var(--wn-bg); border: 1px solid var(--wn-border); border-radius: 8px; padding: 7px 14px; font-size: 12.5px; color: var(--wn-text-muted); }
 </style>

@@ -2,3 +2,4 @@
 
 [post_model_sync]
 whatsnext.patches.v1_1.backfill_conversations
+whatsnext.patches.v1_1.backfill_conversation_summary

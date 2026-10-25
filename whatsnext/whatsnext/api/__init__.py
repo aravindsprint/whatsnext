@@ -278,14 +278,18 @@ def _clean_param(value):
 	return value
 
 
-def _conversation_scope_where(search: str = None):
-	"""Shared WHERE clause + params: customer permission scope, plus an
-	optional search on conversation_id/profile_name. Used by both
-	get_conversations and get_conversation_stats so the counts always
-	match what the list actually shows."""
-	search = _clean_param(search)
-	customers = get_allowed_customers()
-	conditions = ["conversation_id IS NOT NULL", "conversation_id != ''"]
+CONVERSATION_FILTERS = ("all", "unread", "mine", "closed", "incoming", "outgoing")
+
+
+def build_conversation_where(customers, search=None, filter=None, user=None):
+	"""WHERE clause + params over `tabWhatsnext Conversation` (one row per
+	chat, indexed) for the chat list and its header counts.
+
+	customers: get_allowed_customers() result — None means unrestricted.
+	filter: all/unread/mine/incoming/outgoing hide Closed chats; closed
+	shows only those. None skips the open/closed condition entirely (used
+	for the header totals)."""
+	conditions = []
 	params = {}
 
 	if customers is not None:
@@ -296,126 +300,77 @@ def _conversation_scope_where(search: str = None):
 			params["customers"] = tuple(customers)
 
 	if search:
-		conditions.append("(conversation_id LIKE %(search)s OR profile_name LIKE %(search)s)")
+		conditions.append("(name LIKE %(search)s OR profile_name LIKE %(search)s)")
 		params["search"] = f"%{search}%"
 
-	return " AND ".join(conditions), params
+	if filter is not None:
+		filter = filter or "all"
+		if filter not in CONVERSATION_FILTERS:
+			frappe.throw(f"Unknown filter '{filter}'.")
+		if filter == "closed":
+			conditions.append("status = 'Closed'")
+		else:
+			conditions.append("(status IS NULL OR status != 'Closed')")
+		if filter == "unread":
+			conditions.append("unread_count > 0")
+		elif filter == "mine":
+			conditions.append("assigned_to = %(user)s")
+			params["user"] = user
+		elif filter == "incoming":
+			conditions.append("last_message_type = 'Incoming'")
+		elif filter == "outgoing":
+			conditions.append("last_message_type = 'Outgoing'")
+
+	return (" AND ".join(conditions) or "1=1"), params
 
 
 @frappe.whitelist()
-def get_conversations(limit: int = 100, offset: int = 0, search: str = None, filter: str = None):
-	"""Latest message per conversation_id, newest first. Scoped to the
-	logged-in user's assigned customers unless System Manager/Admin.
-	filter: None/'all', 'unread', 'mine', 'closed', 'incoming', 'outgoing'.
-	'all' and the others hide Closed chats; 'closed' shows only those."""
+def get_conversations(limit: int = 50, offset: int = 0, search: str = None, filter: str = None):
+	"""Chat list, newest activity first, one page at a time. Reads only
+	the Whatsnext Conversation table (kept up to date by
+	conversations.touch_conversation), so the cost doesn't grow with message
+	history. Scoped to the user's assigned customers unless System Manager.
+	filter: all/unread/mine/closed/incoming/outgoing."""
 	_require_app_user()
-	limit = int(limit)
-	offset = int(offset)
-	filter = _clean_param(filter)
-
-	where, params = _conversation_scope_where(search)
-
-	# ROW_NUMBER() (tie-broken on the unique `name` column), not MAX()+self-join:
-	# a bulk status update (e.g. marking several messages in one conversation
-	# "Read"/"Delivered" in a single query) can stamp multiple rows with the
-	# exact same `modified` value down to the microsecond. The old
-	# `m.modified = lm.latest` join then matched every tied row, returning
-	# several "latest messages" for one conversation_id — which is what
-	# produced the same contact appearing multiple times in the chat list.
-	rows = frappe.db.sql(
-		"""
-		SELECT m.* FROM (
-			SELECT m2.*,
-				ROW_NUMBER() OVER (
-					PARTITION BY m2.conversation_id
-					ORDER BY m2.modified DESC, m2.name DESC
-				) AS rn
-			FROM `tabWhatsnext Message` m2
-			WHERE """ + where + """
-		) m
-		WHERE m.rn = 1
-		ORDER BY m.modified DESC
-		""",
-		params,
-		as_dict=True,
+	limit = max(1, min(int(limit), 200))
+	offset = max(0, int(offset))
+	where, params = build_conversation_where(
+		get_allowed_customers(), _clean_param(search), _clean_param(filter) or "all", frappe.session.user,
 	)
 
-	unread_ids = set()
-	if rows:
-		conv_ids = tuple(r.conversation_id for r in rows)
-		unread_rows = frappe.db.sql(
-			"""
-			SELECT DISTINCT conversation_id FROM `tabWhatsnext Message`
-			WHERE type='Incoming' AND status='Delivered' AND conversation_id IN %(ids)s
-			""",
-			{"ids": conv_ids},
-		)
-		unread_ids = {r[0] for r in unread_rows}
-
-		# The latest message is often an outgoing one, which carries no
-		# profile_name -- the chat list then showed a bare number (or, for
-		# incoming-first fallbacks, our own business number) instead of the
-		# contact's name. Take the most recent name the contact sent us.
-		name_rows = frappe.db.sql(
-			"""
-			SELECT conversation_id, profile_name FROM (
-				SELECT conversation_id, profile_name,
-					ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY creation DESC, name DESC) AS rn
-				FROM `tabWhatsnext Message`
-				WHERE profile_name IS NOT NULL AND profile_name != '' AND conversation_id IN %(ids)s
-			) t WHERE rn = 1
-			""",
-			{"ids": conv_ids},
-		)
-		profile_names = dict(name_rows)
-	else:
-		profile_names = {}
-
-	conversations = {}
-	if rows:
-		conversations = {
-			c.name: c for c in frappe.get_all(
-				"Whatsnext Conversation",
-				filters={"name": ["in", list(conv_ids)]},
-				fields=["name", "status", "assigned_to", "last_incoming_at", "profile_name", "contact"],
-			)
-		}
+	total = frappe.db.sql(
+		"SELECT COUNT(*) FROM `tabWhatsnext Conversation` WHERE " + where, params
+	)[0][0]
+	rows = frappe.db.sql(
+		"""
+		SELECT name AS conversation_id, profile_name, customer, contact, status AS conversation_status,
+			assigned_to, last_message_at, last_message, last_message_type, last_message_name,
+			last_incoming_at, unread_count
+		FROM `tabWhatsnext Conversation`
+		WHERE """ + where + """
+		ORDER BY last_message_at DESC, name DESC
+		LIMIT %(limit)s OFFSET %(offset)s
+		""",
+		{**params, "limit": limit, "offset": offset},
+		as_dict=True,
+	)
 
 	from whatsnext.whatsnext.conversations import SERVICE_WINDOW_HOURS
 
 	window_cutoff = add_to_date(now_datetime(), hours=-SERVICE_WINDOW_HOURS)
 	for r in rows:
-		r["is_unread"] = r["conversation_id"] in unread_ids
-		conv = conversations.get(r["conversation_id"]) or {}
-		if not r.get("profile_name"):
-			r["profile_name"] = profile_names.get(r["conversation_id"]) or conv.get("profile_name")
-		r["conversation_status"] = conv.get("status") or "Open"
-		r["assigned_to"] = conv.get("assigned_to")
-		r["contact"] = r.get("contact") or conv.get("contact")
-		r["last_incoming_at"] = conv.get("last_incoming_at")
-		r["window_open"] = bool(conv.get("last_incoming_at") and conv["last_incoming_at"] > window_cutoff)
-
-	if filter == "closed":
-		rows = [r for r in rows if r["conversation_status"] == "Closed"]
-	else:
-		rows = [r for r in rows if r["conversation_status"] != "Closed"]
-
-	if filter == "mine":
-		rows = [r for r in rows if r["assigned_to"] == frappe.session.user]
-	elif filter == "unread":
-		rows = [r for r in rows if r["is_unread"]]
-	elif filter == "incoming":
-		rows = [r for r in rows if r["type"] == "Incoming"]
-	elif filter == "outgoing":
-		rows = [r for r in rows if r["type"] == "Outgoing"]
-
-	total = len(rows)
-	page = rows[offset: offset + limit]
+		# Field names the chat UI already uses for a list row.
+		r["name"] = r.last_message_name or r.conversation_id
+		r["message"] = r.last_message
+		r["type"] = r.last_message_type
+		r["modified"] = r.last_message_at
+		r["is_unread"] = bool(r.unread_count)
+		r["window_open"] = bool(r.last_incoming_at and r.last_incoming_at > window_cutoff)
 
 	return {
-		"data": page,
+		"data": rows,
 		"total": total,
-		"has_more": offset + limit < total,
+		"has_more": offset + len(rows) < total,
 	}
 
 
@@ -466,24 +421,18 @@ def get_conversation_media(conversation_id: str):
 
 @frappe.whitelist()
 def get_conversation_stats():
-	"""Counts for the Chats header bar, respecting the same customer
-	permission scope as get_conversations (unfiltered by search)."""
+	"""Counts for the Chats header bar, with the same customer scope as the
+	list — from the conversation table, not a scan of every message."""
 	_require_app_user()
-	where, params = _conversation_scope_where()
-
-	total = frappe.db.sql(
-		"SELECT COUNT(DISTINCT conversation_id) FROM `tabWhatsnext Message` WHERE " + where, params
-	)[0][0]
-	unread = frappe.db.sql(
-		"SELECT COUNT(DISTINCT conversation_id) FROM `tabWhatsnext Message` WHERE type='Incoming' AND status='Delivered' AND " + where,
+	where, params = build_conversation_where(get_allowed_customers())
+	total, unread, sent = frappe.db.sql(
+		"""SELECT COUNT(*),
+			COALESCE(SUM(CASE WHEN unread_count > 0 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(outgoing_count), 0)
+		FROM `tabWhatsnext Conversation` WHERE """ + where,
 		params,
-	)[0][0]
-	sent = frappe.db.sql(
-		"SELECT COUNT(*) FROM `tabWhatsnext Message` WHERE type='Outgoing' AND status IN ('Sent','Delivered','Read') AND " + where,
-		params,
-	)[0][0]
-
-	return {"total": total, "unread": unread, "sent": sent}
+	)[0]
+	return {"total": int(total or 0), "unread": int(unread or 0), "sent": int(sent or 0)}
 
 
 @frappe.whitelist()
@@ -553,6 +502,11 @@ def mark_as_read(conversation_id: str):
 			enqueue_after_commit=True,
 			message_id=latest_unread,
 		)
+
+	from whatsnext.whatsnext.conversations import mark_conversation_read
+
+	if frappe.db.exists("Whatsnext Conversation", conversation_id):
+		mark_conversation_read(conversation_id)
 
 	# Only unread (Delivered) messages: re-stamping every incoming message in
 	# the thread bumped their `modified` on each open for no reason.
@@ -994,6 +948,11 @@ def _mark_failed(msg, error: str):
 		frappe.log_error(frappe.get_traceback(), f"Whatsnext failure-handling itself failed: {msg.name}")
 		frappe.db.set_value("Whatsnext Message", msg.name, "status", "Failed", update_modified=True)
 		frappe.db.commit()
+
+	from whatsnext.whatsnext.conversations import record_outgoing_failed
+
+	record_outgoing_failed(msg.conversation_id)
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- same failure path as above
 
 	settings = frappe.get_cached_doc("Whatsnext Settings")
 	if settings.notify_on_failure and settings.failure_notification_email:

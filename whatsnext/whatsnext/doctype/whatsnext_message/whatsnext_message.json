@@ -92,7 +92,8 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "read_only": 1,
-   "description": "Auto-resolved from the WhatsApp number via the linked Contact. Used to scope chat visibility by assigned Sales Person."
+   "description": "Auto-resolved from the WhatsApp number via the linked Contact. Used to scope chat visibility by assigned Sales Person.",
+   "search_index": 1
   },
   {
    "fieldname": "contact",

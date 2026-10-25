@@ -5,6 +5,7 @@ import { onNewMessage, onMessageUpdate, onNote } from '@/realtime'
 
 const API = 'whatsnext.whatsnext.api'
 const PAGE_SIZE = 50
+const CHAT_PAGE = 50
 
 export const useChatStore = defineStore('chat', {
   state: () => ({
@@ -16,6 +17,9 @@ export const useChatStore = defineStore('chat', {
     infoByConversation: {},
     notesByConversation: {},
     loadingConversations: false,
+    hasMoreConversations: false,
+    loadingMoreConversations: false,
+    totalConversations: 0,
     loadingMessages: false,
     loadingOlder: false,
     search: '',
@@ -43,17 +47,42 @@ export const useChatStore = defineStore('chat', {
         this.conversations = await getCachedConversations()
       }
       try {
+        // Refreshes (live updates, filter changes) keep as many rows as are
+        // already shown, so pages loaded with "Load more" don't vanish.
         const res = await call(`${API}.get_conversations`, {
-          limit: 100,
+          limit: Math.min(200, Math.max(CHAT_PAGE, this.conversations.length)),
           offset: 0,
           search: this.search || undefined,
           filter: this.filter === 'all' ? undefined : this.filter,
         }, 'GET')
         if (requestId !== this._conversationsRequestId) return
         this.conversations = res.data
+        this.hasMoreConversations = res.has_more
+        this.totalConversations = res.total
         if (!this.search && this.filter === 'all') cacheConversations(res.data)
       } finally {
         if (requestId === this._conversationsRequestId) this.loadingConversations = false
+      }
+    },
+    async loadMoreConversations() {
+      if (this.loadingMoreConversations || !this.hasMoreConversations) return
+      this.loadingMoreConversations = true
+      const requestId = this._conversationsRequestId
+      try {
+        const res = await call(`${API}.get_conversations`, {
+          limit: CHAT_PAGE,
+          offset: this.conversations.length,
+          search: this.search || undefined,
+          filter: this.filter === 'all' ? undefined : this.filter,
+        }, 'GET')
+        // A newer full refresh started meanwhile — its result wins.
+        if (requestId !== this._conversationsRequestId) return
+        const seen = new Set(this.conversations.map((c) => c.conversation_id))
+        this.conversations = [...this.conversations, ...res.data.filter((c) => !seen.has(c.conversation_id))]
+        this.hasMoreConversations = res.has_more
+        this.totalConversations = res.total
+      } finally {
+        this.loadingMoreConversations = false
       }
     },
     async loadStats() {
@@ -61,10 +90,12 @@ export const useChatStore = defineStore('chat', {
     },
     setSearch(value) {
       this.search = value
+      this.conversations = []  // new result set: start from the first page
       this.loadConversations()
     },
     setFilter(value) {
       this.filter = value
+      this.conversations = []
       this.loadConversations()
     },
     async openConversation(conversationId) {

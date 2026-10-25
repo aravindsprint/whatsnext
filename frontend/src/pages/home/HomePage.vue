@@ -667,7 +667,10 @@ async function sendNewChat(payload) {
       <ConversationList
         :conversations="chat.conversations"
         :active-id="chat.activeConversationId"
+        :has-more="chat.hasMoreConversations"
+        :loading-more="chat.loadingMoreConversations"
         @select="selectConversation"
+        @load-more="chat.loadMoreConversations()"
       />
     </div>
 

@@ -275,6 +275,11 @@ def _apply_status_update(provider_message_id, new_status, error=None):
 		updates["error_message"] = str(error)[:140]
 	frappe.db.set_value("Whatsnext Message", row.name, updates)
 
+	if new_status == "Failed" and row.type == "Outgoing":
+		from whatsnext.whatsnext.conversations import record_outgoing_failed
+
+		record_outgoing_failed(row.conversation_id)
+
 	if row.reference_doctype == "Whatsnext Campaign" and row.reference_name:
 		_update_campaign_recipient(row.reference_name, row.name, new_status, error)
 

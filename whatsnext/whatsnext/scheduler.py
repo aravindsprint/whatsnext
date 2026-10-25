@@ -14,6 +14,8 @@ def dispatch_scheduled_messages():
 		return
 
 	from whatsnext.whatsnext.api import _dispatch
+	from whatsnext.whatsnext.conversations import touch_conversation
+	from whatsnext.whatsnext.doctype.whatsnext_message.whatsnext_message import publish_message_event
 
 	for row in due:
 		msg = frappe.get_doc("Whatsnext Message", row.name)
@@ -25,14 +27,15 @@ def dispatch_scheduled_messages():
 				params = json.loads(msg.template_parameters)
 			except Exception:
 				params = {}
+		# Place it in the chat timeline (and at the top of the chat list) when
+		# it actually goes out, not when it was scheduled.
+		frappe.db.set_value("Whatsnext Message", msg.name, "creation", now_datetime(), update_modified=False)
+		msg.reload()
+		touch_conversation(msg, sending_scheduled=True)
 		# Media-header templates need their header URL back, which lives on
 		# the message's attach field -- without it Meta rejects the send.
 		_dispatch(msg, template_doc=template_doc, params=params, header_media_url=msg.attach or None)
-		# Place it in the chat timeline when it actually went out, not when it
-		# was scheduled (the timeline is ordered by creation).
-		frappe.db.set_value("Whatsnext Message", msg.name, "creation", now_datetime(), update_modified=False)
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- scheduled job, one message at a time
-		from whatsnext.whatsnext.doctype.whatsnext_message.whatsnext_message import publish_message_event
 
 		msg.reload()
 		publish_message_event(msg, event="whatsnext_new_message")
@@ -68,14 +71,18 @@ def recover_stuck_messages():
 			"scheduled_time": ["is", "not set"],
 			"modified": ["<", cutoff],
 		},
-		pluck="name",
+		fields=["name", "conversation_id", "type"],
 	)
-	for name in stuck:
+	from whatsnext.whatsnext.conversations import record_outgoing_failed
+
+	for row in stuck:
 		frappe.db.set_value(
-			"Whatsnext Message", name,
+			"Whatsnext Message", row.name,
 			{"status": "Failed", "error_message": "Stuck in Pending/Queued for >30min — auto-marked Failed by safety-net job."},
 			update_modified=True,
 		)
+		if row.type == "Outgoing":
+			record_outgoing_failed(row.conversation_id)
 	if stuck:
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- scheduled job, no request-level auto-commit to rely on
 

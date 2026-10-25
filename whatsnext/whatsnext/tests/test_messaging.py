@@ -188,6 +188,58 @@ class TestMessaging(FrappeTestCase):
 			save_number_as_contact(conversation_id=number, first_name="Again")
 
 
+	def test_chat_list_reads_conversation_summary(self):
+		from whatsnext.whatsnext.api import get_conversation_stats, get_conversations, mark_as_read
+
+		a, b = _number(12), _number(13)
+		self._incoming(a, "First chat", "wamid.l1")
+		self._incoming(b, "Second chat", "wamid.l2")
+		self._incoming(b, "Still there?", "wamid.l3")
+
+		page = get_conversations(limit=200, search=TEST_PREFIX)
+		ids = [r.conversation_id for r in page["data"]]
+		self.assertLess(ids.index(b), ids.index(a))  # newest activity first
+		row_b = next(r for r in page["data"] if r.conversation_id == b)
+		self.assertEqual(row_b.message, "Still there?")
+		self.assertTrue(row_b.is_unread)
+		self.assertEqual(frappe.db.get_value("Whatsnext Conversation", b, "unread_count"), 2)
+
+		mark_as_read(conversation_id=b)
+		self.assertEqual(frappe.db.get_value("Whatsnext Conversation", b, "unread_count"), 0)
+		unread_ids = [r.conversation_id for r in get_conversations(limit=200, filter="unread", search=TEST_PREFIX)["data"]]
+		self.assertIn(a, unread_ids)
+		self.assertNotIn(b, unread_ids)
+
+		before = get_conversation_stats()["sent"]
+		send_message(to=b, message="Yes, here")
+		self.assertEqual(get_conversation_stats()["sent"], before + 1)
+		self.assertEqual(get_conversations(limit=1, search=b)["data"][0].type, "Outgoing")
+
+	def test_chat_list_paging(self):
+		from whatsnext.whatsnext.api import get_conversations
+
+		for i in range(3):
+			self._incoming(_number(30 + i), f"Hi {i}", f"wamid.p{i}")
+		first = get_conversations(limit=2, offset=0, search=TEST_PREFIX + "000")
+		second = get_conversations(limit=2, offset=2, search=TEST_PREFIX + "000")
+		self.assertEqual(len(first["data"]), 2)
+		self.assertTrue(first["has_more"])
+		self.assertFalse(second["has_more"])
+		self.assertFalse({r.conversation_id for r in first["data"]} & {r.conversation_id for r in second["data"]})
+
+	def test_failed_send_not_counted_as_sent(self):
+		from whatsnext.whatsnext.api import get_conversation_stats
+
+		number = _number(14)
+		self._incoming(number, "Hi", "wamid.in14")
+		before = get_conversation_stats()["sent"]
+		bad = MagicMock(status_code=400, text="{}")
+		bad.json.return_value = {"error": {"message": "Recipient not on WhatsApp"}}
+		self.post.return_value = bad
+		send_message(to=number, message="Hello")
+		self.assertEqual(get_conversation_stats()["sent"], before)
+
+
 class TestCampaign(FrappeTestCase):
 	def setUp(self):
 		patch("whatsnext.whatsnext.provider_engine.requests.post", return_value=_meta_ok()).start()
