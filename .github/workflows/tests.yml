@@ -7,13 +7,18 @@ on:
 
 jobs:
   backend-unit:
-    name: Backend unit tests
+    name: Backend unit tests (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11: Frappe v15. 3.14: Frappe v16.
+        python: ["3.11", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python }}
       - run: pip install -r tests/requirements.txt
       - run: python -m pytest tests/unit -q
 

@@ -10,7 +10,11 @@ import json
 from unittest.mock import MagicMock, patch
 
 import frappe
-from frappe.tests.utils import FrappeTestCase
+try:
+	# Frappe v16+: FrappeTestCase is a deprecated compatibility alias.
+	from frappe.tests import IntegrationTestCase as FrappeTestCase
+except ImportError:  # Frappe v14/v15
+	from frappe.tests.utils import FrappeTestCase
 
 from whatsnext.whatsnext.api import send_message, send_template_message
 from whatsnext.whatsnext.api.webhook import _apply_status_update, _save_incoming_meta_message

@@ -85,7 +85,12 @@ website_route_rules = [
     # script in particular MUST be served with a JS mime type, or the
     # browser rejects registration with a SecurityError. Listed before the
     # wildcard so they're matched first.
-    {"from_route": "/whatsnext/sw.js", "to_route": "whatsnext/sw.js"},
+    # Served from sw.min.js: Frappe's website renderer passes www/ .js files
+    # through Jinja like a page, except files ending in "min.js", which it
+    # sends unchanged. A stray "{{" or "{%" in a future minified build would
+    # otherwise break the service worker (push, offline, auto-update). The
+    # public URL stays /whatsnext/sw.js so existing registrations keep working.
+    {"from_route": "/whatsnext/sw.js", "to_route": "whatsnext/sw.min.js"},
     {"from_route": "/whatsnext/manifest.webmanifest", "to_route": "whatsnext/manifest.webmanifest"},
     {"from_route": "/whatsnext/<path:app_path>", "to_route": "whatsnext"},
 ]
