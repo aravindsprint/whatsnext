@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev-site.js && vite",
     "build": "vite build && node scripts/copy-sw.js",
     "preview": "vite preview",
     "test": "vitest run"

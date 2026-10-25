@@ -80,8 +80,9 @@ yarn install
 yarn dev   # proxies /api to http://localhost:8000 by default
 ```
 
-To develop against another site, copy `frontend/.env.example` to
-`frontend/.env.local` and set `WHATSNEXT_DEV_SITE` (that file is git-ignored).
+The first `yarn dev` asks which Frappe site to connect to and saves it to
+`frontend/.env.local` (git-ignored, never deployed). Edit or delete that file to
+change it, or set `WHATSNEXT_DEV_SITE` in the shell for a one-off run.
 
 See `DEPLOY.md` for the production build/deploy checklist.
 
