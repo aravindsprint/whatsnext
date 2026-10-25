@@ -44,7 +44,7 @@ const statuses = ['All', 'Pending', 'Queued', 'Sent', 'Delivered', 'Read', 'Fail
     </div>
 
     <div class="wn-card">
-      <table class="wn-table">
+      <table v-table-labels class="wn-table wn-stack">
         <thead>
           <tr>
             <th>To / From</th>
@@ -85,6 +85,8 @@ button.ghost { background: white; border: 1px solid var(--wn-border); padding: 8
 .wn-table th { text-align: left; padding: 12px 14px; font-size: 11px; text-transform: uppercase; color: var(--wn-text-muted); border-bottom: 1px solid var(--wn-border); }
 .wn-table td { padding: 10px 14px; border-bottom: 1px solid var(--wn-border); }
 .wn-msg-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1199px) { .wn-msg-cell { max-width: 180px; } }
+@media (max-width: 768px) { .wn-msg-cell { max-width: none; white-space: normal; } }
 .wn-status { font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 10px; background: #eef2f2; }
 .wn-status.delivered, .wn-status.read { background: #e6f7f4; color: var(--wn-teal); }
 .wn-status.failed { background: #fee2e2; color: var(--wn-red); }

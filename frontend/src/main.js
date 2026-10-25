@@ -6,12 +6,13 @@ import './style.css'
 
 import { getSessionUser, isLoggedIn } from './api/frappe'
 import { ensureCacheOwner } from './db'
+import tableLabels from './lib/tableLabels'
 
 // Before anything reads the offline cache: drop it if it belongs to a
 // different user than the one now logged in.
 const ready = isLoggedIn() ? ensureCacheOwner(getSessionUser()) : Promise.resolve()
 ready.finally(() => {
-  createApp(App).use(createPinia()).use(router).mount('#app')
+  createApp(App).use(createPinia()).use(router).directive('table-labels', tableLabels).mount('#app')
 })
 
 // Manual service worker registration — vite-plugin-pwa's normal

@@ -52,7 +52,7 @@ const segments = computed(() => {
       <div class="wn-bubble-content">
         <p v-if="message.message">
           <template v-for="(seg, i) in segments" :key="i">
-            <a v-if="seg.href" :href="seg.href" target="_blank" rel="noopener" class="wn-bubble-link">{{ seg.href.includes('maps.google.com') ? 'Open in Maps' : seg.text }}</a>
+            <a v-if="seg.href" :href="seg.href" target="_blank" rel="noopener" class="wn-bubble-link" :class="{ raw: !seg.href.includes('maps.google.com') }">{{ seg.href.includes('maps.google.com') ? 'Open in Maps' : seg.text }}</a>
             <template v-else>{{ seg.text }}</template>
           </template>
         </p>
@@ -96,12 +96,14 @@ const segments = computed(() => {
 .wn-bubble-video { width: 100%; max-width: 280px; display: block; }
 .wn-bubble-doc { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--wn-blue); padding: 8px 12px; }
 .wn-bubble-doc svg, .wn-bubble-template svg { flex-shrink: 0; }
-.wn-bubble-link { color: var(--wn-blue); word-break: break-all; }
+.wn-bubble-link { color: var(--wn-blue); overflow-wrap: anywhere; word-break: normal; white-space: nowrap; }
+.wn-bubble-link.raw { white-space: normal; }
 .wn-bubble-error { font-size: 11.5px; color: var(--wn-red) !important; }
 .wn-bubble-meta { display: flex; gap: 4px; justify-content: flex-end; align-items: center; font-size: 10px; color: var(--wn-text-muted); margin-top: 2px; }
 .wn-bubble-meta .read { color: var(--wn-blue); }
 .wn-bubble-reply { background: none; border: none; padding: 0 4px; color: var(--wn-text-muted); font-size: 12px; cursor: pointer; opacity: 0; transition: opacity 0.15s; }
 .wn-bubble:hover .wn-bubble-reply, .wn-bubble-reply:focus { opacity: 1; }
 @media (hover: none) { .wn-bubble-reply { opacity: 0.7; } }
-@media (max-width: 768px) { .wn-bubble { max-width: 85%; } }
+@container chatpane (max-width: 600px) { .wn-bubble { max-width: 86%; } }
+@container chatpane (min-width: 1000px) { .wn-bubble { max-width: 58%; } }
 </style>

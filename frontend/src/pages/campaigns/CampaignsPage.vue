@@ -167,7 +167,7 @@ async function rowAction(c, action) {
     </div>
 
     <div class="wn-card">
-      <table class="wn-table">
+      <table v-table-labels class="wn-table wn-stack wn-stack-lg">
         <thead>
           <tr>
             <th>Campaign</th>

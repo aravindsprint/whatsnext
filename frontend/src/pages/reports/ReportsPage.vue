@@ -98,7 +98,7 @@ const totals = computed(() => {
     </div>
 
     <div class="wn-card">
-      <table class="wn-table">
+      <table v-table-labels class="wn-table wn-stack">
         <thead>
           <tr>
             <th>Agent</th>

@@ -42,3 +42,97 @@ button.danger { color: var(--wn-red); }
 .wn-badge.green { background: var(--wn-teal-light); color: #0f8c72; }
 .wn-badge.amber { background: #fef3c7; color: #92400e; }
 .wn-badge.red { background: #fee2e2; color: #b91c1c; }
+
+/* ======================================================================
+   Responsive layer (phone ≤768px · tablet 769–1199px · laptop/desktop).
+   Selectors are prefixed with .wn-app-shell .wn-content so they take
+   precedence over each page's own scoped styles at these sizes.
+   ====================================================================== */
+
+html { -webkit-text-size-adjust: 100%; }
+img, video { max-width: 100%; }
+
+/* Long unbroken strings (webhook URLs, IDs, emails) wrap instead of
+   pushing the page wider than the screen. */
+.wn-app-shell .wn-content code { overflow-wrap: anywhere; word-break: break-word; }
+
+/* Tables keep their full layout on wide screens, scroll sideways inside
+   their card if a little too wide, and become cards on small screens. */
+.wn-app-shell .wn-content .wn-card:has(> .wn-table) { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+@media (max-width: 1024px) {
+  .wn-app-shell .wn-content table.wn-stack-lg { min-width: 0; }
+  .wn-app-shell .wn-content table.wn-stack-lg thead { display: none; }
+  .wn-app-shell .wn-content table.wn-stack-lg,
+  .wn-app-shell .wn-content table.wn-stack-lg tbody,
+  .wn-app-shell .wn-content table.wn-stack-lg tr,
+  .wn-app-shell .wn-content table.wn-stack-lg td { display: block; width: 100%; }
+  .wn-app-shell .wn-content table.wn-stack-lg tr { padding: 10px 0; border-bottom: 1px solid var(--wn-border); }
+  .wn-app-shell .wn-content table.wn-stack-lg td { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 5px 2px; border: none; text-align: right; }
+  .wn-app-shell .wn-content table.wn-stack-lg td::before { content: attr(data-label); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; color: var(--wn-text-muted); text-align: left; flex-shrink: 0; }
+  .wn-app-shell .wn-content table.wn-stack-lg td:first-child { font-weight: 600; font-size: 14px; }
+  .wn-app-shell .wn-content table.wn-stack-lg td:first-child::before { display: none; }
+  .wn-app-shell .wn-content table.wn-stack-lg td[data-full] { display: block; text-align: center; }
+  .wn-app-shell .wn-content table.wn-stack-lg td[data-full]::before { display: none; }
+  .wn-app-shell .wn-content table.wn-stack-lg td:not([data-label]):not([data-full]):not(:first-child) { justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+}
+
+@media (max-width: 768px) {
+  .wn-app-shell .wn-content table.wn-stack { min-width: 0; }
+  .wn-app-shell .wn-content table.wn-stack thead { display: none; }
+  .wn-app-shell .wn-content table.wn-stack,
+  .wn-app-shell .wn-content table.wn-stack tbody,
+  .wn-app-shell .wn-content table.wn-stack tr,
+  .wn-app-shell .wn-content table.wn-stack td { display: block; width: 100%; }
+  .wn-app-shell .wn-content table.wn-stack tr { padding: 10px 0; border-bottom: 1px solid var(--wn-border); }
+  .wn-app-shell .wn-content table.wn-stack td { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 5px 2px; border: none; text-align: right; overflow-wrap: anywhere; }
+  .wn-app-shell .wn-content table.wn-stack td::before { content: attr(data-label); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; color: var(--wn-text-muted); text-align: left; flex-shrink: 0; }
+  .wn-app-shell .wn-content table.wn-stack td:first-child { font-weight: 600; font-size: 14px; text-align: left; justify-content: flex-start; }
+  .wn-app-shell .wn-content table.wn-stack td:first-child::before { display: none; }
+  .wn-app-shell .wn-content table.wn-stack td[data-full] { display: block; text-align: center; }
+  .wn-app-shell .wn-content table.wn-stack td[data-full]::before { display: none; }
+  .wn-app-shell .wn-content table.wn-stack td:empty { display: none; }
+  /* Cells with no column title (row actions): buttons together on the right. */
+  .wn-app-shell .wn-content table.wn-stack td:not([data-label]):not([data-full]):not(:first-child) { justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+}
+
+/* Page toolbars (intro text + action buttons). */
+@media (max-width: 768px) {
+  .wn-app-shell .wn-content .wn-toolbar { flex-direction: column; align-items: stretch; gap: 10px; }
+  .wn-app-shell .wn-content .wn-toolbar > * { max-width: none; min-width: 0; }
+  .wn-app-shell .wn-content .wn-toolbar > button,
+  .wn-app-shell .wn-content .wn-toolbar-actions > button { width: 100%; justify-content: center; white-space: nowrap; }
+  .wn-app-shell .wn-content .wn-toolbar-actions { display: flex; gap: 8px; }
+  .wn-app-shell .wn-content .wn-toolbar-actions > button { flex: 1; }
+}
+
+/* Forms: side-by-side fields collapse to one column on phones; inputs are
+   16px there so iOS Safari doesn't zoom in when one is focused. */
+@media (max-width: 768px) {
+  .wn-app-shell .wn-content .wn-row,
+  .wn-app-shell .wn-content .wn-flex,
+  .wn-app-shell .wn-content .wn-loc-row { display: flex; flex-direction: column; gap: 0; }
+  .wn-app-shell input:not([type="checkbox"]):not([type="radio"]),
+  .wn-app-shell select,
+  .wn-app-shell textarea { font-size: 16px !important; }
+  .wn-app-shell .wn-content .wn-card { padding: 14px; }
+}
+
+/* Modals become bottom sheets on phones. */
+@media (max-width: 768px) {
+  .wn-app-shell .wn-content .wn-modal-backdrop { align-items: flex-end; }
+  .wn-app-shell .wn-content .wn-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92dvh;
+    border-radius: 16px 16px 0 0;
+    padding: 18px 16px max(18px, env(safe-area-inset-bottom));
+  }
+  .wn-app-shell .wn-content .wn-modal-actions { position: sticky; bottom: calc(-1 * max(18px, env(safe-area-inset-bottom))); background: white; padding: 10px 0 4px; margin-bottom: 0; }
+  .wn-app-shell .wn-content .wn-modal-actions > button { flex: 1; }
+}
+
+/* Larger touch targets on touch screens. */
+@media (pointer: coarse) {
+  .wn-app-shell button.small { min-height: 34px; }
+}

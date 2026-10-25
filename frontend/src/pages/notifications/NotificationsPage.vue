@@ -184,7 +184,7 @@ async function remove(row) {
       <p v-if="error && !showForm" class="wn-error">{{ error }}</p>
 
       <div class="wn-card">
-        <table class="wn-table">
+        <table v-table-labels class="wn-table wn-stack">
           <thead>
             <tr><th>Name</th><th>Document</th><th>Event</th><th>Template</th><th>Enabled</th><th></th></tr>
           </thead>
