@@ -47,7 +47,10 @@ self.addEventListener('push', (event) => {
     // manifest icons do, since injectManifest only injects the precache
     // list into this file, not rewrite arbitrary string literals in it.
     icon: '/assets/whatsnext/whatsnext_frontend/icons/icon-192.png',
-    badge: '/assets/whatsnext/whatsnext_frontend/icons/icon-192.png',
+    // Android draws the small status-bar icon from transparency alone, so
+    // an opaque icon shows as a white square: this one is a white bubble on
+    // a transparent background.
+    badge: '/assets/whatsnext/whatsnext_frontend/icons/badge-96.png',
     tag: data.tag || 'whatsnext',
     renotify: true,
     data: { url: data.url || '/whatsnext' },
