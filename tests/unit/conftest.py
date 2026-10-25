@@ -162,6 +162,7 @@ def frappe():
 	FRAPPE.log_error = MagicMock(name="log_error")
 	FRAPPE.enqueue = MagicMock(name="enqueue")
 	FRAPPE.get_roles = MagicMock(return_value=["Whatsnext User"])
+	FRAPPE.get_hooks = MagicMock(return_value=[])
 	FRAPPE.local.request = None
 	FRAPPE.form_dict = _Dict()
 	FRAPPE.session.user = "agent@example.com"

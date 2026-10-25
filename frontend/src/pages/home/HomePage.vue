@@ -9,6 +9,7 @@ import { toFrappeDatetime } from '@/lib/templateVars'
 import ConversationList from '@/components/ConversationList.vue'
 import MessageBubble from '@/components/MessageBubble.vue'
 import TemplateSendForm from '@/components/TemplateSendForm.vue'
+import AiReplySuggestions from '@/components/AiReplySuggestions.vue'
 
 const chat = useChatStore()
 const auth = useAuthStore()
@@ -216,6 +217,13 @@ function useQuickReply(r) {
   draft.value = (r.message || '').replace(/\{name\}/g, name || 'there')
   showQuickReplies.value = false
   qrSearch.value = ''
+}
+
+// --- AI reply suggestions (only when an add-on provides them) ------------
+const aiReplies = computed(() => auth.extensions?.smart_replies || null)
+function useAiSuggestion(text) {
+  draft.value = text
+  nextTick(() => document.querySelector('.wn-composer input[type="text"]')?.focus())
 }
 
 function onDraftKeydown(e) {
@@ -797,6 +805,8 @@ async function sendNewChat(payload) {
                 </p>
               </div>
             </div>
+            <AiReplySuggestions v-if="aiReplies && !noteMode" :ext="aiReplies" :conversation-id="chat.activeConversationId"
+                                @use="useAiSuggestion" @open="showQuickReplies = false; showEmojiPicker = false; showAttachMenu = false" />
             <div class="wn-emoji-wrap">
               <button type="button" class="wn-tpl-btn" :class="{ active: showAttachMenu }" @click="showAttachMenu = !showAttachMenu; showQuickReplies = false" :disabled="attachSending" title="Attach">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

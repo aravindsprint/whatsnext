@@ -71,6 +71,19 @@ scheduler_events = {
 	},
 }
 
+# Extensions
+# ------------------
+# Other apps can add features to the chat by declaring, in their own hooks.py:
+#
+# whatsnext_extensions = [{
+#     "feature": "smart_replies",                     # what the chat should show
+#     "enabled": "my_app.api.is_enabled",            # optional; returns True/False
+#     "options": "my_app.api.get_reply_options",     # whitelisted, GET
+#     "suggest": "my_app.api.suggest_replies",       # whitelisted, POST
+# }]
+#
+# api.whoami() lists the enabled ones and the SPA shows the matching UI.
+
 # Installation
 # ------------------
 after_install = "whatsnext.whatsnext.setup.create_defaults"
