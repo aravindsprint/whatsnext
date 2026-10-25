@@ -1,9 +1,39 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { parseFrappeDate } from '@/lib/date'
+import { translateText } from '@/lib/aiReplies'
 
-const props = defineProps({ message: Object })
+// translateExt: the "translate" extension from an installed add-on, when
+// there is one; adds "Translate" under customers' messages.
+const props = defineProps({ message: Object, translateExt: { type: Object, default: null } })
 const emit = defineEmits(['reply', 'jump'])
+
+const translation = ref(null)
+const translating = ref(false)
+const translateError = ref('')
+const showTranslation = ref(false)
+const canTranslate = computed(() =>
+  !!props.translateExt && props.message?.type === 'Incoming' && !!(props.message?.message || '').trim()
+)
+
+async function toggleTranslation() {
+  if (translation.value) {
+    showTranslation.value = !showTranslation.value
+    return
+  }
+  translating.value = true
+  translateError.value = ''
+  try {
+    translation.value = await translateText(props.translateExt, {
+      conversationId: props.message.conversation_id, text: props.message.message, to: 'agent',
+    })
+    showTranslation.value = true
+  } catch (e) {
+    translateError.value = e.message
+  } finally {
+    translating.value = false
+  }
+}
 
 const statusIcon = { Sent: '✓', Delivered: '✓✓', Read: '✓✓', Failed: '⚠️', Pending: '🕒', Queued: '🕒' }
 
@@ -74,6 +104,14 @@ const segments = computed(() => {
             <template v-else>{{ seg.text }}</template>
           </template>
         </p>
+        <div v-if="showTranslation && translation" class="wn-bubble-translation">
+          <span class="wn-bubble-translation-label">🌐 {{ translation.language || 'Translation' }}</span>
+          {{ translation.text }}
+        </div>
+        <button v-if="canTranslate" type="button" class="wn-bubble-translate" :disabled="translating" @click="toggleTranslation">
+          {{ translating ? 'Translating…' : (showTranslation ? 'Hide translation' : 'Translate') }}
+        </button>
+        <span v-if="translateError" class="wn-bubble-error">{{ translateError }}</span>
         <p v-if="message.type === 'Outgoing' && message.status === 'Failed' && message.error_message" class="wn-bubble-error">
           Not delivered: {{ message.error_message }}
         </p>
@@ -117,6 +155,15 @@ const segments = computed(() => {
 .wn-bubble-link { color: var(--wn-blue); overflow-wrap: anywhere; word-break: normal; white-space: nowrap; }
 .wn-bubble-link.raw { white-space: normal; }
 .wn-bubble-error { font-size: 11.5px; color: var(--wn-red) !important; }
+.wn-bubble-translation {
+  margin-top: 6px; padding: 6px 8px; border-left: 3px solid var(--wn-teal); background: var(--wn-teal-light);
+  border-radius: 4px; font-size: 13px; white-space: pre-wrap;
+}
+.wn-bubble-translation-label { display: block; font-size: 10.5px; font-weight: 600; color: #0b7a6e; margin-bottom: 2px; }
+.wn-bubble-translate {
+  background: none; border: none; padding: 2px 0 0; color: var(--wn-teal); font-size: 11.5px; font-weight: 600; cursor: pointer;
+}
+.wn-bubble-translate:disabled { color: var(--wn-text-muted); cursor: default; }
 .wn-bubble-meta { display: flex; gap: 4px; justify-content: flex-end; align-items: center; font-size: 10px; color: var(--wn-text-muted); margin-top: 2px; }
 .wn-bubble-meta .read { color: var(--wn-blue); }
 .wn-bubble-reply { background: none; border: none; padding: 0 4px; color: var(--wn-text-muted); font-size: 12px; cursor: pointer; opacity: 0; transition: opacity 0.15s; }

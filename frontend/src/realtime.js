@@ -46,3 +46,11 @@ export function onNote(callback) {
   s.on('whatsnext_note', callback)
   return () => s.off('whatsnext_note', callback)
 }
+
+// Sent by add-ons when something about a chat changed (for example new AI
+// labels), so the list and the open chat's header refresh.
+export function onConversationUpdate(callback) {
+  const s = getSocket()
+  s.on('whatsnext_conversation_update', callback)
+  return () => s.off('whatsnext_conversation_update', callback)
+}

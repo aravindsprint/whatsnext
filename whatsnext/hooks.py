@@ -83,6 +83,17 @@ scheduler_events = {
 # }]
 #
 # api.whoami() lists the enabled ones and the SPA shows the matching UI.
+# Features the SPA knows: smart_replies (options, suggest), improve_reply
+# (improve), translate (translate), chat_summary (summarize), order_draft
+# (extract, search_items, create) and auto_tag (retag).
+#
+# Chips on chats in the list and chat header:
+# whatsnext_conversation_labels = ["my_app.labels.labels_for"]
+#   called with a list of conversation ids the user may see; returns
+#   {conversation_id: [{"text": "Urgent", "tone": "red", "title": "why"}]}
+#   (tones: teal, gray, orange, red, green). Publish the realtime event
+#   "whatsnext_conversation_update" with {"conversation_id": ...} to make
+#   open chat screens refresh a chat's labels.
 
 # Installation
 # ------------------
