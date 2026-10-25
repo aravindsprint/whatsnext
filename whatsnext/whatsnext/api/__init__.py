@@ -14,7 +14,7 @@ MESSAGE_FIELDS = [
 	"name", "type", "provider", "status", "to_number", "from_number", "profile_name",
 	"message", "message_type", "content_type", "attach", "template", "template_parameters",
 	"reference_doctype", "reference_name", "conversation_id", "provider_message_id",
-	"error_message", "scheduled_time", "creation", "modified",
+	"error_message", "scheduled_time", "creation", "modified", "reply_to", "is_automated", "payload", "owner",
 ]
 
 
@@ -32,7 +32,10 @@ def whoami():
 	settings = frappe.get_cached_doc("Whatsnext Settings")
 	providers = [p for p, on in (("Meta", settings.meta_enabled), ("Twilio", settings.twilio_enabled)) if on]
 
-	agent_ids = set(frappe.get_all(
+	has_access = is_app_user()
+	# The staff list is only for people who can assign chats; anyone else
+	# logged in (e.g. a portal customer) used to receive it too.
+	agent_ids = set() if not has_access else set(frappe.get_all(
 		"Has Role",
 		filters={"parenttype": "User", "role": ["in", ["Whatsnext User", "System Manager"]]},
 		pluck="parent",
@@ -40,17 +43,17 @@ def whoami():
 	)) - {"Administrator", "Guest"}
 	agents = frappe.get_all(
 		"User",
-		filters={"name": ["in", list(agent_ids) or [""]], "enabled": 1, "user_type": "System User"},
+		filters={"name": ["in", list(agent_ids)], "enabled": 1, "user_type": "System User"},
 		fields=["name", "full_name"],
 		order_by="full_name asc",
-	)
+	) if agent_ids else []
 
 	return {
 		"user": frappe.session.user,
 		"full_name": frappe.utils.get_fullname(frappe.session.user),
 		"roles": roles,
 		"is_system_manager": "System Manager" in roles,
-		"has_access": is_app_user(),
+		"has_access": has_access,
 		"providers": providers,
 		"default_provider": settings.default_provider,
 		"opt_out_enabled": bool(settings.opt_out_enabled),
@@ -275,14 +278,18 @@ def _clean_param(value):
 	return value
 
 
-def _conversation_scope_where(search: str = None):
-	"""Shared WHERE clause + params: customer permission scope, plus an
-	optional search on conversation_id/profile_name. Used by both
-	get_conversations and get_conversation_stats so the counts always
-	match what the list actually shows."""
-	search = _clean_param(search)
-	customers = get_allowed_customers()
-	conditions = ["conversation_id IS NOT NULL", "conversation_id != ''"]
+CONVERSATION_FILTERS = ("all", "unread", "mine", "closed", "incoming", "outgoing")
+
+
+def build_conversation_where(customers, search=None, filter=None, user=None):
+	"""WHERE clause + params over `tabWhatsnext Conversation` (one row per
+	chat, indexed) for the chat list and its header counts.
+
+	customers: get_allowed_customers() result — None means unrestricted.
+	filter: all/unread/mine/incoming/outgoing hide Closed chats; closed
+	shows only those. None skips the open/closed condition entirely (used
+	for the header totals)."""
+	conditions = []
 	params = {}
 
 	if customers is not None:
@@ -293,126 +300,77 @@ def _conversation_scope_where(search: str = None):
 			params["customers"] = tuple(customers)
 
 	if search:
-		conditions.append("(conversation_id LIKE %(search)s OR profile_name LIKE %(search)s)")
+		conditions.append("(name LIKE %(search)s OR profile_name LIKE %(search)s)")
 		params["search"] = f"%{search}%"
 
-	return " AND ".join(conditions), params
+	if filter is not None:
+		filter = filter or "all"
+		if filter not in CONVERSATION_FILTERS:
+			frappe.throw(f"Unknown filter '{filter}'.")
+		if filter == "closed":
+			conditions.append("status = 'Closed'")
+		else:
+			conditions.append("(status IS NULL OR status != 'Closed')")
+		if filter == "unread":
+			conditions.append("unread_count > 0")
+		elif filter == "mine":
+			conditions.append("assigned_to = %(user)s")
+			params["user"] = user
+		elif filter == "incoming":
+			conditions.append("last_message_type = 'Incoming'")
+		elif filter == "outgoing":
+			conditions.append("last_message_type = 'Outgoing'")
+
+	return (" AND ".join(conditions) or "1=1"), params
 
 
 @frappe.whitelist()
-def get_conversations(limit: int = 100, offset: int = 0, search: str = None, filter: str = None):
-	"""Latest message per conversation_id, newest first. Scoped to the
-	logged-in user's assigned customers unless System Manager/Admin.
-	filter: None/'all', 'unread', 'mine', 'closed', 'incoming', 'outgoing'.
-	'all' and the others hide Closed chats; 'closed' shows only those."""
+def get_conversations(limit: int = 50, offset: int = 0, search: str = None, filter: str = None):
+	"""Chat list, newest activity first, one page at a time. Reads only
+	the Whatsnext Conversation table (kept up to date by
+	conversations.touch_conversation), so the cost doesn't grow with message
+	history. Scoped to the user's assigned customers unless System Manager.
+	filter: all/unread/mine/closed/incoming/outgoing."""
 	_require_app_user()
-	limit = int(limit)
-	offset = int(offset)
-	filter = _clean_param(filter)
-
-	where, params = _conversation_scope_where(search)
-
-	# ROW_NUMBER() (tie-broken on the unique `name` column), not MAX()+self-join:
-	# a bulk status update (e.g. marking several messages in one conversation
-	# "Read"/"Delivered" in a single query) can stamp multiple rows with the
-	# exact same `modified` value down to the microsecond. The old
-	# `m.modified = lm.latest` join then matched every tied row, returning
-	# several "latest messages" for one conversation_id — which is what
-	# produced the same contact appearing multiple times in the chat list.
-	rows = frappe.db.sql(
-		"""
-		SELECT m.* FROM (
-			SELECT m2.*,
-				ROW_NUMBER() OVER (
-					PARTITION BY m2.conversation_id
-					ORDER BY m2.modified DESC, m2.name DESC
-				) AS rn
-			FROM `tabWhatsnext Message` m2
-			WHERE """ + where + """
-		) m
-		WHERE m.rn = 1
-		ORDER BY m.modified DESC
-		""",
-		params,
-		as_dict=True,
+	limit = max(1, min(int(limit), 200))
+	offset = max(0, int(offset))
+	where, params = build_conversation_where(
+		get_allowed_customers(), _clean_param(search), _clean_param(filter) or "all", frappe.session.user,
 	)
 
-	unread_ids = set()
-	if rows:
-		conv_ids = tuple(r.conversation_id for r in rows)
-		unread_rows = frappe.db.sql(
-			"""
-			SELECT DISTINCT conversation_id FROM `tabWhatsnext Message`
-			WHERE type='Incoming' AND status='Delivered' AND conversation_id IN %(ids)s
-			""",
-			{"ids": conv_ids},
-		)
-		unread_ids = {r[0] for r in unread_rows}
-
-		# The latest message is often an outgoing one, which carries no
-		# profile_name -- the chat list then showed a bare number (or, for
-		# incoming-first fallbacks, our own business number) instead of the
-		# contact's name. Take the most recent name the contact sent us.
-		name_rows = frappe.db.sql(
-			"""
-			SELECT conversation_id, profile_name FROM (
-				SELECT conversation_id, profile_name,
-					ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY creation DESC, name DESC) AS rn
-				FROM `tabWhatsnext Message`
-				WHERE profile_name IS NOT NULL AND profile_name != '' AND conversation_id IN %(ids)s
-			) t WHERE rn = 1
-			""",
-			{"ids": conv_ids},
-		)
-		profile_names = dict(name_rows)
-	else:
-		profile_names = {}
-
-	conversations = {}
-	if rows:
-		conversations = {
-			c.name: c for c in frappe.get_all(
-				"Whatsnext Conversation",
-				filters={"name": ["in", list(conv_ids)]},
-				fields=["name", "status", "assigned_to", "last_incoming_at", "profile_name", "contact"],
-			)
-		}
+	total = frappe.db.sql(
+		"SELECT COUNT(*) FROM `tabWhatsnext Conversation` WHERE " + where, params
+	)[0][0]
+	rows = frappe.db.sql(
+		"""
+		SELECT name AS conversation_id, profile_name, customer, contact, status AS conversation_status,
+			assigned_to, last_message_at, last_message, last_message_type, last_message_name,
+			last_incoming_at, unread_count
+		FROM `tabWhatsnext Conversation`
+		WHERE """ + where + """
+		ORDER BY last_message_at DESC, name DESC
+		LIMIT %(limit)s OFFSET %(offset)s
+		""",
+		{**params, "limit": limit, "offset": offset},
+		as_dict=True,
+	)
 
 	from whatsnext.whatsnext.conversations import SERVICE_WINDOW_HOURS
 
 	window_cutoff = add_to_date(now_datetime(), hours=-SERVICE_WINDOW_HOURS)
 	for r in rows:
-		r["is_unread"] = r["conversation_id"] in unread_ids
-		conv = conversations.get(r["conversation_id"]) or {}
-		if not r.get("profile_name"):
-			r["profile_name"] = profile_names.get(r["conversation_id"]) or conv.get("profile_name")
-		r["conversation_status"] = conv.get("status") or "Open"
-		r["assigned_to"] = conv.get("assigned_to")
-		r["contact"] = r.get("contact") or conv.get("contact")
-		r["last_incoming_at"] = conv.get("last_incoming_at")
-		r["window_open"] = bool(conv.get("last_incoming_at") and conv["last_incoming_at"] > window_cutoff)
-
-	if filter == "closed":
-		rows = [r for r in rows if r["conversation_status"] == "Closed"]
-	else:
-		rows = [r for r in rows if r["conversation_status"] != "Closed"]
-
-	if filter == "mine":
-		rows = [r for r in rows if r["assigned_to"] == frappe.session.user]
-	elif filter == "unread":
-		rows = [r for r in rows if r["is_unread"]]
-	elif filter == "incoming":
-		rows = [r for r in rows if r["type"] == "Incoming"]
-	elif filter == "outgoing":
-		rows = [r for r in rows if r["type"] == "Outgoing"]
-
-	total = len(rows)
-	page = rows[offset: offset + limit]
+		# Field names the chat UI already uses for a list row.
+		r["name"] = r.last_message_name or r.conversation_id
+		r["message"] = r.last_message
+		r["type"] = r.last_message_type
+		r["modified"] = r.last_message_at
+		r["is_unread"] = bool(r.unread_count)
+		r["window_open"] = bool(r.last_incoming_at and r.last_incoming_at > window_cutoff)
 
 	return {
-		"data": page,
+		"data": rows,
 		"total": total,
-		"has_more": offset + limit < total,
+		"has_more": offset + len(rows) < total,
 	}
 
 
@@ -463,24 +421,18 @@ def get_conversation_media(conversation_id: str):
 
 @frappe.whitelist()
 def get_conversation_stats():
-	"""Counts for the Chats header bar, respecting the same customer
-	permission scope as get_conversations (unfiltered by search)."""
+	"""Counts for the Chats header bar, with the same customer scope as the
+	list — from the conversation table, not a scan of every message."""
 	_require_app_user()
-	where, params = _conversation_scope_where()
-
-	total = frappe.db.sql(
-		"SELECT COUNT(DISTINCT conversation_id) FROM `tabWhatsnext Message` WHERE " + where, params
-	)[0][0]
-	unread = frappe.db.sql(
-		"SELECT COUNT(DISTINCT conversation_id) FROM `tabWhatsnext Message` WHERE type='Incoming' AND status='Delivered' AND " + where,
+	where, params = build_conversation_where(get_allowed_customers())
+	total, unread, sent = frappe.db.sql(
+		"""SELECT COUNT(*),
+			COALESCE(SUM(CASE WHEN unread_count > 0 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(outgoing_count), 0)
+		FROM `tabWhatsnext Conversation` WHERE """ + where,
 		params,
-	)[0][0]
-	sent = frappe.db.sql(
-		"SELECT COUNT(*) FROM `tabWhatsnext Message` WHERE type='Outgoing' AND status IN ('Sent','Delivered','Read') AND " + where,
-		params,
-	)[0][0]
-
-	return {"total": total, "unread": unread, "sent": sent}
+	)[0]
+	return {"total": int(total or 0), "unread": int(unread or 0), "sent": int(sent or 0)}
 
 
 @frappe.whitelist()
@@ -504,7 +456,31 @@ def get_messages(conversation_id: str, limit: int = 100, offset: int = 0):
 		limit_start=int(offset),
 	)
 	rows.reverse()
+	_attach_reply_previews(rows)
 	return rows
+
+
+def _attach_reply_previews(rows):
+	"""Each reply carries a short preview of the message it quotes."""
+	ids = list({r.reply_to for r in rows if r.get("reply_to")})
+	if not ids:
+		return
+	quoted = {
+		q.name: q for q in frappe.get_all(
+			"Whatsnext Message",
+			filters={"name": ["in", ids]},
+			fields=["name", "type", "message", "content_type", "template", "profile_name"],
+		)
+	}
+	for r in rows:
+		q = quoted.get(r.get("reply_to"))
+		if q:
+			r["reply_preview"] = {
+				"name": q.name,
+				"type": q.type,
+				"text": (q.message or ("📋 " + q.template if q.template else f"[{q.content_type}]"))[:160],
+				"author": q.profile_name if q.type == "Incoming" else "You",
+			}
 
 
 @frappe.whitelist()
@@ -526,6 +502,11 @@ def mark_as_read(conversation_id: str):
 			enqueue_after_commit=True,
 			message_id=latest_unread,
 		)
+
+	from whatsnext.whatsnext.conversations import mark_conversation_read
+
+	if frappe.db.exists("Whatsnext Conversation", conversation_id):
+		mark_conversation_read(conversation_id)
 
 	# Only unread (Delivered) messages: re-stamping every incoming message in
 	# the thread bumped their `modified` on each open for no reason.
@@ -559,6 +540,11 @@ def get_conversation_info(conversation_id: str):
 		"assigned_to_name": frappe.utils.get_fullname(conv.assigned_to) if conv.assigned_to else None,
 		"customer": conv.customer,
 		"contact": conv.contact,
+		"lead": frappe.db.get_value(
+			"Dynamic Link",
+			{"parenttype": "Contact", "parent": conv.contact, "link_doctype": "Lead"},
+			"link_name",
+		) if conv.contact else None,
 		"profile_name": conv.profile_name,
 		"window_expires_at": expires,
 		"window_open": bool(expires and expires > now_datetime()),
@@ -686,7 +672,8 @@ def _render_body(body: str, params: dict) -> str:
 @frappe.whitelist()
 def send_message(to: str, message: str, provider: str | None = None,
                   reference_doctype: str | None = None, reference_name: str | None = None,
-                  scheduled_time: str | None = None):
+                  scheduled_time: str | None = None, reply_to: str | None = None,
+                  automated: int | bool = 0):
 	"""Send a free-form text message. Only valid inside a 24h customer service
 	window per WhatsApp policy — use send_template_message outside that window.
 	With a future scheduled_time the message is queued for the scheduler."""
@@ -699,7 +686,7 @@ def send_message(to: str, message: str, provider: str | None = None,
 		type="Outgoing", provider=provider, status="Pending", to_number=to,
 		message=message, message_type="Manual", content_type="text",
 		reference_doctype=_clean_param(reference_doctype), reference_name=_clean_param(reference_name),
-		scheduled_time=when,
+		scheduled_time=when, reply_to=_clean_reply_to(reply_to, to), is_automated=1 if int(automated or 0) else 0,
 	)
 	if not when:
 		_dispatch(msg)
@@ -710,7 +697,7 @@ def send_message(to: str, message: str, provider: str | None = None,
 def send_media_message(to: str, media_url: str, media_type: str, caption: str = "",
                         provider: str | None = None,
                         reference_doctype: str | None = None, reference_name: str | None = None,
-                        scheduled_time: str | None = None):
+                        scheduled_time: str | None = None, reply_to: str | None = None):
 	"""Send a standalone image/video/document/audio message (composer
 	attach button) — as opposed to a header image that's part of a
 	Template send."""
@@ -724,6 +711,7 @@ def send_media_message(to: str, media_url: str, media_type: str, caption: str = 
 		message=caption, message_type="Manual", content_type=media_type,
 		attach=media_url, reference_doctype=_clean_param(reference_doctype),
 		reference_name=_clean_param(reference_name), scheduled_time=when,
+		reply_to=_clean_reply_to(reply_to, to),
 	)
 	if not when:
 		_dispatch(msg)
@@ -735,7 +723,8 @@ def send_template_message(to: str, template: str, parameters: str | dict | None 
                            provider: str | None = None,
                            reference_doctype: str | None = None, reference_name: str | None = None,
                            header_media_url: str | None = None, scheduled_time: str | None = None,
-                           attach_print: int | bool = 0, print_format: str | None = None):
+                           attach_print: int | bool = 0, print_format: str | None = None,
+                           reply_to: str | None = None, automated: int | bool = 0):
 	"""attach_print: render the referenced document's print format as a PDF
 	and send it as the Document header (used by the Desk WhatsApp button)."""
 	_require_app_user()
@@ -784,10 +773,91 @@ def send_template_message(to: str, template: str, parameters: str | dict | None 
 		content_type=content_type, attach=header_media_url,
 		template=template, template_parameters=json.dumps(parameters),
 		reference_doctype=_clean_param(reference_doctype), reference_name=_clean_param(reference_name),
-		scheduled_time=when,
+		scheduled_time=when, reply_to=_clean_reply_to(reply_to, to),
+		is_automated=1 if int(automated or 0) else 0,
 	)
 	if not when:
 		_dispatch(msg, template_doc=tpl, params=parameters, header_media_url=header_media_url)
+	return msg.as_dict()
+
+
+@frappe.whitelist()
+def send_location(to: str, latitude: float, longitude: float, name: str | None = None,
+                  address: str | None = None, provider: str | None = None, reply_to: str | None = None):
+	"""Share a map pin (free-form, so only inside the 24-hour window)."""
+	_require_app_user()
+	to = normalize_outbound_number(to)
+	provider = _resolve_provider(provider)
+	try:
+		lat, lng = float(latitude), float(longitude)
+	except (TypeError, ValueError):
+		frappe.throw("Latitude and longitude must be numbers.")
+	if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+		frappe.throw("That isn't a valid map position.")
+	_assert_window_open(to)
+	name, address = _clean_param(name) or "", _clean_param(address) or ""
+	label = " — ".join(x for x in (name, address) if x)
+	msg = _create_message_record(
+		type="Outgoing", provider=provider, status="Pending", to_number=to,
+		message=f"📍 {label + ' ' if label else ''}https://maps.google.com/?q={lat},{lng}",
+		message_type="Manual", content_type="location",
+		payload=json.dumps({"latitude": lat, "longitude": lng, "name": name, "address": address}),
+		reply_to=_clean_reply_to(reply_to, to),
+	)
+	_dispatch(msg)
+	return msg.as_dict()
+
+
+@frappe.whitelist()
+def search_contact_cards(search: str | None = None):
+	"""ERPNext Contacts the user may read, for sharing as a contact card."""
+	_require_app_user()
+	search = _clean_param(search)
+	or_filters = None
+	if search:
+		like = f"%{search}%"
+		or_filters = [["full_name", "like", like], ["mobile_no", "like", like], ["phone", "like", like], ["company_name", "like", like]]
+	return frappe.get_list(
+		"Contact",
+		or_filters=or_filters,
+		fields=["name", "full_name", "mobile_no", "phone", "email_id", "company_name"],
+		order_by="modified desc",
+		limit_page_length=20,
+	)
+
+
+@frappe.whitelist()
+def send_contact_card(to: str, contact: str | None = None, name: str | None = None, phone: str | None = None,
+                      provider: str | None = None, reply_to: str | None = None):
+	"""Share a contact card — an ERPNext Contact, or a name + number."""
+	_require_app_user()
+	to = normalize_outbound_number(to)
+	provider = _resolve_provider(provider)
+	contact = _clean_param(contact)
+	if contact:
+		doc = frappe.get_doc("Contact", contact)
+		doc.check_permission("read")
+		card = {
+			"name": doc.full_name or " ".join(x for x in (doc.first_name, doc.last_name) if x) or doc.name,
+			"phones": [p.phone for p in doc.phone_nos] or [x for x in (doc.mobile_no, doc.phone) if x],
+			"emails": [e.email_id for e in doc.email_ids] or ([doc.email_id] if doc.email_id else []),
+			"company": doc.company_name,
+		}
+	else:
+		if not (_clean_param(name) and _clean_param(phone)):
+			frappe.throw("Choose a contact, or enter a name and a phone number.")
+		card = {"name": name.strip(), "phones": [phone.strip()], "emails": [], "company": None}
+	if not card["phones"]:
+		frappe.throw(f"{card['name']} has no phone number to share.")
+	_assert_window_open(to)
+	msg = _create_message_record(
+		type="Outgoing", provider=provider, status="Pending", to_number=to,
+		message=f"👤 Contact: {card['name']} {', '.join(card['phones'])}",
+		message_type="Manual", content_type="contacts",
+		payload=json.dumps({"contacts": [card]}),
+		reply_to=_clean_reply_to(reply_to, to),
+	)
+	_dispatch(msg)
 	return msg.as_dict()
 
 
@@ -808,15 +878,25 @@ def _dispatch(msg, template_doc=None, params=None, header_media_url=None):
 	back through the whitelisted endpoint as a 500 — the SPA reads status."""
 	try:
 		provider = get_provider(msg.provider)
+		context_id = _reply_context_id(msg)
+		payload = _load_json(msg.get("payload"))
 		if msg.message_type == "Template" and template_doc:
 			result = provider.send_template(
 				msg.to_number, template_doc.name, params, template_doc.language,
 				header_media_url=header_media_url, header_type=template_doc.header_type,
+				context_id=context_id,
 			)
+		elif msg.content_type == "location" and payload:
+			result = provider.send_location(
+				msg.to_number, payload.get("latitude"), payload.get("longitude"),
+				payload.get("name") or "", payload.get("address") or "", context_id=context_id,
+			)
+		elif msg.content_type == "contacts" and payload:
+			result = provider.send_contacts(msg.to_number, payload.get("contacts") or [], context_id=context_id)
 		elif msg.content_type in ("image", "video", "document", "audio") and msg.attach:
-			result = provider.send_media(msg.to_number, msg.attach, msg.content_type, msg.message or "")
+			result = provider.send_media(msg.to_number, msg.attach, msg.content_type, msg.message or "", context_id=context_id)
 		else:
-			result = provider.send_text(msg.to_number, msg.message)
+			result = provider.send_text(msg.to_number, msg.message, context_id=context_id)
 
 		provider_message_id = _extract_provider_message_id(provider.name, result)
 		msg.db_set("status", "Sent", update_modified=False)
@@ -830,6 +910,33 @@ def _dispatch(msg, template_doc=None, params=None, header_media_url=None):
 		_mark_failed(msg, str(e))
 
 
+def _load_json(value):
+	if not value:
+		return {}
+	if isinstance(value, (dict, list)):
+		return value
+	try:
+		return json.loads(value)
+	except Exception:
+		return {}
+
+
+def _reply_context_id(msg):
+	if not msg.get("reply_to"):
+		return None
+	return frappe.db.get_value("Whatsnext Message", msg.reply_to, "provider_message_id")
+
+
+def _clean_reply_to(reply_to, conversation_id):
+	"""A reply must quote a message from the same chat."""
+	reply_to = _clean_param(reply_to)
+	if not reply_to:
+		return None
+	if frappe.db.get_value("Whatsnext Message", reply_to, "conversation_id") != conversation_id:
+		frappe.throw("You can only reply to a message from this conversation.")
+	return reply_to
+
+
 def _mark_failed(msg, error: str):
 	try:
 		msg.reload()
@@ -841,6 +948,11 @@ def _mark_failed(msg, error: str):
 		frappe.log_error(frappe.get_traceback(), f"Whatsnext failure-handling itself failed: {msg.name}")
 		frappe.db.set_value("Whatsnext Message", msg.name, "status", "Failed", update_modified=True)
 		frappe.db.commit()
+
+	from whatsnext.whatsnext.conversations import record_outgoing_failed
+
+	record_outgoing_failed(msg.conversation_id)
+	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- same failure path as above
 
 	settings = frappe.get_cached_doc("Whatsnext Settings")
 	if settings.notify_on_failure and settings.failure_notification_email:
@@ -1678,3 +1790,310 @@ def delete_quick_reply(name: str):
 	_require_app_user()
 	frappe.delete_doc("Whatsnext Quick Reply", name)
 	return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Agent report
+# ---------------------------------------------------------------------------
+
+@frappe.whitelist()
+def agent_report(from_date: str | None = None, to_date: str | None = None):
+	"""Per-agent activity for a date range: messages sent, chats handled,
+	replies and how quickly they came after the customer wrote, plus open
+	chats currently assigned. Automated sends (notifications, campaigns,
+	auto-replies) are excluded. System Managers see every agent; other
+	users see only their own row."""
+	_require_app_user()
+	import statistics
+
+	from frappe.utils import date_diff, get_datetime
+
+	to_date = getdate(_clean_param(to_date) or getdate())
+	from_date = getdate(_clean_param(from_date) or add_to_date(to_date, days=-6))
+	if from_date > to_date:
+		frappe.throw("The start date must be before the end date.")
+	if date_diff(to_date, from_date) > 92:
+		frappe.throw("Choose a range of up to 3 months.")
+
+	is_manager = "System Manager" in frappe.get_roles(frappe.session.user)
+	start = get_datetime(f"{from_date} 00:00:00")
+	end = get_datetime(f"{to_date} 23:59:59.999999")
+
+	rows = frappe.db.sql(
+		"""
+		SELECT conversation_id, type, is_automated, owner, creation
+		FROM `tabWhatsnext Message`
+		WHERE creation BETWEEN %(start)s AND %(end)s
+			AND conversation_id IS NOT NULL AND conversation_id != ''
+			AND status != 'Failed'
+			AND NOT (status = 'Pending' AND scheduled_time IS NOT NULL)
+		ORDER BY conversation_id, creation
+		""",
+		{"start": start, "end": end},
+		as_dict=True,
+	)
+
+	stats = {}
+
+	def agent(user):
+		return stats.setdefault(user, {"user": user, "messages_sent": 0, "chats": set(), "response_minutes": []})
+
+	incoming = 0
+	waiting_chats = 0
+	current_conv, waiting_since = None, None
+	for r in rows:
+		if r.conversation_id != current_conv:
+			if waiting_since is not None:
+				waiting_chats += 1
+			current_conv, waiting_since = r.conversation_id, None
+
+		if r.type == "Incoming":
+			incoming += 1
+			if waiting_since is None:
+				waiting_since = r.creation
+			continue
+
+		if r.is_automated or r.owner in ("Guest", None):
+			continue  # auto-replies don't count as answering the customer
+
+		a = agent(r.owner)
+		a["messages_sent"] += 1
+		a["chats"].add(r.conversation_id)
+		if waiting_since is not None:
+			a["response_minutes"].append((r.creation - waiting_since).total_seconds() / 60)
+			waiting_since = None
+	if waiting_since is not None:
+		waiting_chats += 1
+
+	open_assigned = dict(frappe.db.sql(
+		"""SELECT assigned_to, COUNT(*) FROM `tabWhatsnext Conversation`
+		WHERE status = 'Open' AND assigned_to IS NOT NULL AND assigned_to != ''
+		GROUP BY assigned_to"""
+	))
+	for user in open_assigned:
+		agent(user)
+
+	result = []
+	for user, a in stats.items():
+		if not is_manager and user != frappe.session.user:
+			continue
+		times = a["response_minutes"]
+		result.append({
+			"user": user,
+			"full_name": frappe.utils.get_fullname(user),
+			"messages_sent": a["messages_sent"],
+			"chats_handled": len(a["chats"]),
+			"replies": len(times),
+			"avg_response_minutes": round(sum(times) / len(times), 1) if times else None,
+			"median_response_minutes": round(statistics.median(times), 1) if times else None,
+			"open_assigned": open_assigned.get(user, 0),
+		})
+	result.sort(key=lambda x: (-x["messages_sent"], x["full_name"] or x["user"]))
+
+	return {
+		"from_date": str(from_date),
+		"to_date": str(to_date),
+		"agents": result,
+		"totals": {
+			"incoming_messages": incoming,
+			"chats_waiting_for_reply": waiting_chats,
+			"unassigned_open_chats": frappe.db.count(
+				"Whatsnext Conversation", {"status": "Open", "assigned_to": ["is", "not set"]}
+			),
+		} if is_manager else None,
+	}
+
+
+# ---------------------------------------------------------------------------
+# Internal notes (team-only, never sent)
+# ---------------------------------------------------------------------------
+
+def _publish_note_event(conversation_id):
+	from whatsnext.whatsnext.permissions import users_who_can_see
+
+	customer = frappe.db.get_value("Whatsnext Conversation", conversation_id, "customer")
+	for user in users_who_can_see(customer):
+		frappe.publish_realtime(
+			event="whatsnext_note", message={"conversation_id": conversation_id}, user=user, after_commit=True,
+		)
+
+
+@frappe.whitelist()
+def get_notes(conversation_id: str):
+	_require_app_user()
+	_assert_conversation_access(conversation_id)
+	notes = frappe.get_all(
+		"Whatsnext Conversation Note",
+		filters={"conversation_id": conversation_id},
+		fields=["name", "note", "owner", "creation"],
+		order_by="creation asc",
+	)
+	for n in notes:
+		n["author"] = frappe.utils.get_fullname(n.owner)
+	return notes
+
+
+@frappe.whitelist()
+def add_note(conversation_id: str, note: str):
+	_require_app_user()
+	_assert_conversation_access(conversation_id)
+	note = (note or "").strip()
+	if not note:
+		frappe.throw("The note is empty.")
+	doc = frappe.get_doc({
+		"doctype": "Whatsnext Conversation Note",
+		"conversation_id": conversation_id,
+		"note": note,
+	}).insert(ignore_permissions=True)
+	_publish_note_event(conversation_id)
+	return {"name": doc.name, "note": doc.note, "owner": doc.owner, "creation": doc.creation,
+	        "author": frappe.utils.get_fullname(doc.owner)}
+
+
+@frappe.whitelist()
+def delete_note(name: str):
+	"""Authors can delete their own notes; System Managers any note."""
+	_require_app_user()
+	owner, conversation_id = frappe.db.get_value("Whatsnext Conversation Note", name, ["owner", "conversation_id"])
+	if owner != frappe.session.user and "System Manager" not in frappe.get_roles(frappe.session.user):
+		frappe.throw("You can only delete your own notes.", frappe.PermissionError)
+	frappe.delete_doc("Whatsnext Conversation Note", name, ignore_permissions=True)
+	_publish_note_event(conversation_id)
+	return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Link an unknown number to ERPNext (Contact / Lead)
+# ---------------------------------------------------------------------------
+
+def _relink_conversation(conversation_id, contact, customer=None):
+	"""Point every message in the chat (and the chat itself) at the new
+	Contact, and its Customer when there is one."""
+	frappe.db.sql(
+		"""UPDATE `tabWhatsnext Message` SET contact = %(contact)s
+		WHERE conversation_id = %(cid)s""",
+		{"contact": contact, "cid": conversation_id},
+	)
+	if customer:
+		frappe.db.sql(
+			"""UPDATE `tabWhatsnext Message` SET customer = %(customer)s
+			WHERE conversation_id = %(cid)s AND (customer IS NULL OR customer = '')""",
+			{"customer": customer, "cid": conversation_id},
+		)
+	_ensure_conversation(conversation_id)
+	updates = {"contact": contact}
+	if customer:
+		updates["customer"] = customer
+	frappe.db.set_value("Whatsnext Conversation", conversation_id, updates, update_modified=False)
+
+
+def _new_contact(first_name, last_name, number, links):
+	contact = frappe.get_doc({
+		"doctype": "Contact",
+		"first_name": first_name,
+		"last_name": last_name or None,
+		"phone_nos": [{"phone": f"+{number}", "is_primary_mobile_no": 1}],
+		"links": links,
+	})
+	# Normal permissions on purpose: agents can only create Contacts if their
+	# ERPNext role allows it.
+	contact.insert()
+	return contact
+
+
+@frappe.whitelist()
+def save_number_as_contact(conversation_id: str, first_name: str, last_name: str | None = None,
+                           customer: str | None = None):
+	"""Create an ERPNext Contact for a chat's number (optionally linked to an
+	existing Customer) and link the chat to it."""
+	_require_app_user()
+	_assert_conversation_access(conversation_id)
+	first_name = (first_name or "").strip()
+	if not first_name:
+		frappe.throw("Enter a first name.")
+	customer = _clean_param(customer)
+
+	from whatsnext.whatsnext.contacts import resolve_contact_from_phone
+
+	existing = resolve_contact_from_phone(conversation_id)
+	if existing:
+		frappe.throw(f"This number already belongs to Contact {existing}.")
+
+	links = []
+	if customer:
+		if not frappe.db.exists("Customer", customer):
+			frappe.throw(f"Customer {customer} not found.")
+		if not frappe.has_permission("Customer", "read", customer):
+			frappe.throw(f"You don't have access to Customer {customer}.", frappe.PermissionError)
+		allowed = get_allowed_customers()
+		if allowed is not None and customer not in allowed:
+			frappe.throw("You can only link chats to customers assigned to you.", frappe.PermissionError)
+		links.append({"link_doctype": "Customer", "link_name": customer})
+
+	contact = _new_contact(first_name, last_name, conversation_id, links)
+	_relink_conversation(conversation_id, contact.name, customer)
+	return get_conversation_info(conversation_id)
+
+
+@frappe.whitelist()
+def create_lead_from_chat(conversation_id: str, first_name: str, last_name: str | None = None,
+                          company_name: str | None = None):
+	"""Create an ERPNext Lead for a new enquiry on WhatsApp, with a Contact
+	for the number, and link the chat to it."""
+	_require_app_user()
+	_assert_conversation_access(conversation_id)
+	first_name = (first_name or "").strip()
+	if not first_name:
+		frappe.throw("Enter a first name.")
+	if not frappe.db.exists("DocType", "Lead"):
+		frappe.throw("ERPNext Leads aren't available on this site.")
+
+	from whatsnext.whatsnext.contacts import resolve_contact_from_phone
+
+	existing = resolve_contact_from_phone(conversation_id)
+	if existing:
+		frappe.throw(f"This number already belongs to Contact {existing}.")
+
+	meta = frappe.get_meta("Lead")
+	lead = frappe.new_doc("Lead")
+	lead.first_name = first_name
+	if meta.has_field("last_name"):
+		lead.last_name = (last_name or "").strip() or None
+	if not meta.has_field("first_name"):  # very old ERPNext
+		lead.lead_name = " ".join(x for x in (first_name, last_name) if x)
+	lead.company_name = _clean_param(company_name)
+	lead.mobile_no = f"+{conversation_id}"
+	if meta.has_field("whatsapp_no"):
+		lead.whatsapp_no = f"+{conversation_id}"
+	if meta.has_field("source") and frappe.db.exists("Lead Source", "WhatsApp"):
+		lead.source = "WhatsApp"
+	lead.insert()  # ERPNext permissions apply
+
+	# Some ERPNext versions create a Contact for the Lead on insert.
+	contact = resolve_contact_from_phone(conversation_id)
+	if not contact:
+		contact = _new_contact(first_name, last_name, conversation_id,
+		                       [{"link_doctype": "Lead", "link_name": lead.name}]).name
+	_relink_conversation(conversation_id, contact)
+
+	info = get_conversation_info(conversation_id)
+	info["lead"] = lead.name
+	return info
+
+
+@frappe.whitelist()
+def search_customers(search: str | None = None):
+	"""Customers this user may link a chat to."""
+	_require_app_user()
+	search = _clean_param(search)
+	filters = {"disabled": 0}
+	allowed = get_allowed_customers()
+	if allowed is not None:
+		if not allowed:
+			return []
+		filters["name"] = ["in", allowed]
+	or_filters = [["name", "like", f"%{search}%"], ["customer_name", "like", f"%{search}%"]] if search else None
+	return frappe.get_list(
+		"Customer", filters=filters, or_filters=or_filters,
+		fields=["name", "customer_name"], order_by="modified desc", limit_page_length=20,
+	)

@@ -74,3 +74,11 @@ class WhatsnextMessage(Document):
 				profile_name=self.profile_name,
 				from_number=self.from_number,
 			)
+
+	def after_delete(self):
+		# Keep the chat list's preview and counters right when a message is
+		# removed (e.g. deleted from Desk).
+		if self.conversation_id and frappe.db.exists("Whatsnext Conversation", self.conversation_id):
+			from whatsnext.whatsnext.conversations import refresh_conversation_summary
+
+			refresh_conversation_summary(self.conversation_id)

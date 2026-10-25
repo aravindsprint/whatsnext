@@ -97,6 +97,22 @@ export async function login(usr, pwd) {
 }
 
 export async function logout() {
+  // Before the session ends: stop this browser receiving push notifications
+  // for this user (the subscription is tied to the account, so it would
+  // otherwise keep showing their customers' messages to whoever uses the
+  // device next), and wipe the offline chat cache.
+  try {
+    const { disablePush } = await import('@/push')
+    await disablePush()
+  } catch {
+    /* push not set up or not supported */
+  }
+  try {
+    const { clearCache } = await import('@/db')
+    await clearCache()
+  } catch {
+    /* ignore */
+  }
   try {
     await fetch('/api/method/logout', { credentials: 'include' })
   } catch {

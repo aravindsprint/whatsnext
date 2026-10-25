@@ -128,6 +128,7 @@ def _fire(notif, doc, check_condition=True):
 		reference_doctype=doc.doctype,
 		reference_name=doc.name,
 		header_media_url=header_media_url,
+		automated=1,
 	)
 
 

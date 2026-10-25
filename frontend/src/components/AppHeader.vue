@@ -14,6 +14,7 @@ const titles = {
   recipients: 'Recipient Lists',
   messages: 'Message Logs',
   notifications: 'Notifications',
+  reports: 'Agent Reports',
   settings: 'Settings',
   about: 'About',
 }

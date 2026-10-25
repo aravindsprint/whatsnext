@@ -14,43 +14,123 @@ from frappe.utils import add_to_date, get_datetime, now_datetime
 SERVICE_WINDOW_HOURS = 24
 
 
-def touch_conversation(msg):
-	"""Called from Whatsnext Message.after_insert."""
+def message_preview(msg) -> str:
+	"""One-line text for the chat list."""
+	text = (msg.get("message") or "").strip()
+	if not text and msg.get("template"):
+		text = f"📋 {msg.get('template')}"
+	if not text and msg.get("content_type") not in (None, "", "text"):
+		text = {"image": "📷 Photo", "video": "🎬 Video", "audio": "🎵 Audio", "document": "📎 Document",
+		        "location": "📍 Location", "contacts": "👤 Contact"}.get(msg.get("content_type"), "📎 Media")
+	return text.replace("\n", " ")[:140]
+
+
+def is_unsent_scheduled(msg) -> bool:
+	return bool(msg.get("scheduled_time")) and msg.get("status") == "Pending"
+
+
+def touch_conversation(msg, sending_scheduled=False):
+	"""Keep the Whatsnext Conversation row in step with its messages. Called
+	from Whatsnext Message.after_insert, and by the scheduler when a
+	scheduled message actually goes out. The chat list reads only this
+	table, so it stays fast however much message history builds up."""
 	conversation_id = msg.conversation_id
-	if not conversation_id:
+	if not conversation_id or (is_unsent_scheduled(msg) and not sending_scheduled):
+		# A scheduled message joins the chat when it's sent, not when it's
+		# scheduled.
 		return
 
 	now = msg.creation or now_datetime()
-	existing = frappe.db.get_value(
-		"Whatsnext Conversation", conversation_id, ["name", "status"], as_dict=True
-	)
-	updates = {"last_message_at": now}
+	incoming = msg.type == "Incoming"
+	updates = {
+		"last_message_at": now,
+		"last_message": message_preview(msg),
+		"last_message_type": msg.type,
+		"last_message_name": msg.name,
+	}
 	if msg.customer:
 		updates["customer"] = msg.customer
 	if msg.get("contact"):
 		updates["contact"] = msg.contact
-	if msg.type == "Incoming":
+	if incoming:
 		updates["last_incoming_at"] = now
 		if msg.profile_name:
 			updates["profile_name"] = msg.profile_name
 		# A customer writing again reopens a closed chat.
 		updates["status"] = "Open"
 
-	if existing:
-		frappe.db.set_value("Whatsnext Conversation", conversation_id, updates, update_modified=False)
-		return
+	if not frappe.db.exists("Whatsnext Conversation", conversation_id):
+		doc = frappe.get_doc({
+			"doctype": "Whatsnext Conversation",
+			"conversation_id": conversation_id,
+			"status": "Open",
+			"unread_count": 1 if incoming and msg.status == "Delivered" else 0,
+			"outgoing_count": 0 if incoming else 1,
+			**updates,
+		})
+		try:
+			doc.insert(ignore_permissions=True)
+			return
+		except frappe.DuplicateEntryError:
+			pass  # created concurrently by another message — update it below
 
-	doc = frappe.get_doc({
-		"doctype": "Whatsnext Conversation",
-		"conversation_id": conversation_id,
-		"status": "Open",
-		**updates,
-	})
-	try:
-		doc.insert(ignore_permissions=True)
-	except frappe.DuplicateEntryError:
-		# Two messages for a brand-new number inserted concurrently.
-		frappe.db.set_value("Whatsnext Conversation", conversation_id, updates, update_modified=False)
+	frappe.db.set_value("Whatsnext Conversation", conversation_id, updates, update_modified=False)
+	# Counters as single atomic UPDATEs, so concurrent webhooks can't lose counts.
+	if incoming and msg.status == "Delivered":
+		_bump(conversation_id, "unread_count", 1)
+	elif not incoming:
+		_bump(conversation_id, "outgoing_count", 1)
+
+
+def _bump(conversation_id, field, delta):
+	assert field in ("unread_count", "outgoing_count")
+	frappe.db.sql(
+		f"""UPDATE `tabWhatsnext Conversation`
+		SET `{field}` = GREATEST(COALESCE(`{field}`, 0) + %(delta)s, 0)
+		WHERE name = %(name)s""",
+		{"delta": delta, "name": conversation_id},
+	)
+
+
+def mark_conversation_read(conversation_id):
+	frappe.db.set_value("Whatsnext Conversation", conversation_id, "unread_count", 0, update_modified=False)
+
+
+def record_outgoing_failed(conversation_id):
+	"""A sent message turned out Failed — it no longer counts as sent."""
+	if conversation_id:
+		_bump(conversation_id, "outgoing_count", -1)
+
+
+def refresh_conversation_summary(conversation_id):
+	"""Recompute the summary fields from the messages (used after a message
+	is removed, and by the backfill patch)."""
+	latest = frappe.db.sql(
+		"""SELECT name, type, message, template, content_type, creation, scheduled_time, status
+		FROM `tabWhatsnext Message`
+		WHERE conversation_id = %(cid)s AND NOT (status = 'Pending' AND scheduled_time IS NOT NULL)
+		ORDER BY creation DESC, name DESC LIMIT 1""",
+		{"cid": conversation_id},
+		as_dict=True,
+	)
+	counts = frappe.db.sql(
+		"""SELECT
+			SUM(CASE WHEN type = 'Incoming' AND status = 'Delivered' THEN 1 ELSE 0 END),
+			SUM(CASE WHEN type = 'Outgoing' AND status != 'Failed'
+				AND NOT (status = 'Pending' AND scheduled_time IS NOT NULL) THEN 1 ELSE 0 END)
+		FROM `tabWhatsnext Message` WHERE conversation_id = %(cid)s""",
+		{"cid": conversation_id},
+	)[0]
+	updates = {"unread_count": int(counts[0] or 0), "outgoing_count": int(counts[1] or 0)}
+	if latest:
+		m = latest[0]
+		updates.update({
+			"last_message_at": m.creation,
+			"last_message": message_preview(m),
+			"last_message_type": m.type,
+			"last_message_name": m.name,
+		})
+	frappe.db.set_value("Whatsnext Conversation", conversation_id, updates, update_modified=False)
 
 
 def window_expires_at(conversation_id):
@@ -140,7 +220,7 @@ def handle_opt_keywords(message_doc):
 		try:
 			from whatsnext.whatsnext.api import send_message
 
-			send_message(to=message_doc.from_number, message=reply, provider=message_doc.provider)
+			send_message(to=message_doc.from_number, message=reply, provider=message_doc.provider, automated=1)
 		except Exception:
 			frappe.log_error(frappe.get_traceback(), "Whatsnext: opt-out confirmation failed")
 	return True
@@ -224,6 +304,6 @@ def send_away_reply(conversation_id, provider=None):
 	from whatsnext.whatsnext.api import send_message
 
 	try:
-		send_message(to=conversation_id, message=settings.away_message, provider=provider)
+		send_message(to=conversation_id, message=settings.away_message, provider=provider, automated=1)
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), f"Whatsnext: away reply to {conversation_id} failed")

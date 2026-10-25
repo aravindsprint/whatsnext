@@ -25,9 +25,12 @@
   "column_content_1",
   "template",
   "template_parameters",
+  "payload",
   "section_meta",
   "provider_message_id",
   "conversation_id",
+  "reply_to",
+  "is_automated",
   "error_message",
   "scheduled_time",
   "column_meta2",
@@ -89,7 +92,8 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "read_only": 1,
-   "description": "Auto-resolved from the WhatsApp number via the linked Contact. Used to scope chat visibility by assigned Sales Person."
+   "description": "Auto-resolved from the WhatsApp number via the linked Contact. Used to scope chat visibility by assigned Sales Person.",
+   "search_index": 1
   },
   {
    "fieldname": "contact",
@@ -120,7 +124,7 @@
    "fieldname": "content_type",
    "fieldtype": "Select",
    "label": "Content Type",
-   "options": "text\nimage\ndocument\nvideo\naudio\nlocation\ninteractive",
+   "options": "text\nimage\ndocument\nvideo\naudio\nlocation\ninteractive\ncontacts",
    "default": "text"
   },
   {
@@ -144,6 +148,13 @@
    "label": "Template Parameters"
   },
   {
+   "fieldname": "payload",
+   "fieldtype": "JSON",
+   "label": "Payload",
+   "read_only": 1,
+   "description": "Structured content for location and contact-card messages."
+  },
+  {
    "fieldname": "section_meta",
    "fieldtype": "Section Break",
    "label": "Delivery Metadata",
@@ -154,12 +165,30 @@
    "fieldtype": "Data",
    "label": "Provider Message ID",
    "unique": 0,
-   "in_standard_filter": 1
+   "in_standard_filter": 1,
+   "search_index": 1
   },
   {
    "fieldname": "conversation_id",
    "fieldtype": "Data",
-   "label": "Conversation ID"
+   "label": "Conversation ID",
+   "search_index": 1
+  },
+  {
+   "fieldname": "reply_to",
+   "fieldtype": "Link",
+   "options": "Whatsnext Message",
+   "label": "Reply To",
+   "read_only": 1,
+   "description": "The message this one quotes/replies to."
+  },
+  {
+   "fieldname": "is_automated",
+   "fieldtype": "Check",
+   "label": "Automated",
+   "read_only": 1,
+   "default": "0",
+   "description": "Sent by a notification, campaign or auto-reply rather than an agent (excluded from agent reports)."
   },
   {
    "fieldname": "error_message",

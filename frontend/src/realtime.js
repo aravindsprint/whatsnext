@@ -40,3 +40,9 @@ export function onMessageUpdate(callback) {
   s.on('whatsnext_message_update', callback)
   return () => s.off('whatsnext_message_update', callback)
 }
+
+export function onNote(callback) {
+  const s = getSocket()
+  s.on('whatsnext_note', callback)
+  return () => s.off('whatsnext_note', callback)
+}

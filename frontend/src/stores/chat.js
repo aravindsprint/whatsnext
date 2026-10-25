@@ -1,10 +1,11 @@
 import { defineStore } from 'pinia'
 import { call } from '@/api/frappe'
 import { cacheConversations, getCachedConversations, cacheMessages, getCachedMessages } from '@/db'
-import { onNewMessage, onMessageUpdate } from '@/realtime'
+import { onNewMessage, onMessageUpdate, onNote } from '@/realtime'
 
 const API = 'whatsnext.whatsnext.api'
 const PAGE_SIZE = 50
+const CHAT_PAGE = 50
 
 export const useChatStore = defineStore('chat', {
   state: () => ({
@@ -14,7 +15,11 @@ export const useChatStore = defineStore('chat', {
     // conversation_id -> true while older pages may still exist
     hasOlderByConversation: {},
     infoByConversation: {},
+    notesByConversation: {},
     loadingConversations: false,
+    hasMoreConversations: false,
+    loadingMoreConversations: false,
+    totalConversations: 0,
     loadingMessages: false,
     loadingOlder: false,
     search: '',
@@ -26,6 +31,7 @@ export const useChatStore = defineStore('chat', {
   getters: {
     activeMessages: (state) => state.messagesByConversation[state.activeConversationId] || [],
     activeInfo: (state) => state.infoByConversation[state.activeConversationId] || null,
+    activeNotes: (state) => state.notesByConversation[state.activeConversationId] || [],
     activeHasOlder: (state) => !!state.hasOlderByConversation[state.activeConversationId],
   },
   actions: {
@@ -41,17 +47,42 @@ export const useChatStore = defineStore('chat', {
         this.conversations = await getCachedConversations()
       }
       try {
+        // Refreshes (live updates, filter changes) keep as many rows as are
+        // already shown, so pages loaded with "Load more" don't vanish.
         const res = await call(`${API}.get_conversations`, {
-          limit: 100,
+          limit: Math.min(200, Math.max(CHAT_PAGE, this.conversations.length)),
           offset: 0,
           search: this.search || undefined,
           filter: this.filter === 'all' ? undefined : this.filter,
         }, 'GET')
         if (requestId !== this._conversationsRequestId) return
         this.conversations = res.data
+        this.hasMoreConversations = res.has_more
+        this.totalConversations = res.total
         if (!this.search && this.filter === 'all') cacheConversations(res.data)
       } finally {
         if (requestId === this._conversationsRequestId) this.loadingConversations = false
+      }
+    },
+    async loadMoreConversations() {
+      if (this.loadingMoreConversations || !this.hasMoreConversations) return
+      this.loadingMoreConversations = true
+      const requestId = this._conversationsRequestId
+      try {
+        const res = await call(`${API}.get_conversations`, {
+          limit: CHAT_PAGE,
+          offset: this.conversations.length,
+          search: this.search || undefined,
+          filter: this.filter === 'all' ? undefined : this.filter,
+        }, 'GET')
+        // A newer full refresh started meanwhile — its result wins.
+        if (requestId !== this._conversationsRequestId) return
+        const seen = new Set(this.conversations.map((c) => c.conversation_id))
+        this.conversations = [...this.conversations, ...res.data.filter((c) => !seen.has(c.conversation_id))]
+        this.hasMoreConversations = res.has_more
+        this.totalConversations = res.total
+      } finally {
+        this.loadingMoreConversations = false
       }
     },
     async loadStats() {
@@ -59,10 +90,12 @@ export const useChatStore = defineStore('chat', {
     },
     setSearch(value) {
       this.search = value
+      this.conversations = []  // new result set: start from the first page
       this.loadConversations()
     },
     setFilter(value) {
       this.filter = value
+      this.conversations = []
       this.loadConversations()
     },
     async openConversation(conversationId) {
@@ -70,6 +103,7 @@ export const useChatStore = defineStore('chat', {
       this.loadingMessages = true
       this.messagesByConversation[conversationId] = await getCachedMessages(conversationId)
       this.loadInfo(conversationId)
+      this.loadNotes(conversationId)
       try {
         await this.refreshMessages(conversationId)
         await call(`${API}.mark_as_read`, { conversation_id: conversationId })
@@ -117,6 +151,42 @@ export const useChatStore = defineStore('chat', {
         /* non-fatal: header just shows less */
       }
     },
+    async loadNotes(conversationId = this.activeConversationId) {
+      if (!conversationId) return
+      try {
+        this.notesByConversation[conversationId] = await call(`${API}.get_notes`, { conversation_id: conversationId }, 'GET')
+      } catch {
+        /* non-fatal */
+      }
+    },
+    async addNote(note) {
+      const id = this.activeConversationId
+      const saved = await call(`${API}.add_note`, { conversation_id: id, note })
+      const list = this.notesByConversation[id] || []
+      if (!list.some((n) => n.name === saved.name)) this.notesByConversation[id] = [...list, saved]
+      return saved
+    },
+    async deleteNote(name) {
+      const id = this.activeConversationId
+      await call(`${API}.delete_note`, { name })
+      this.notesByConversation[id] = (this.notesByConversation[id] || []).filter((n) => n.name !== name)
+    },
+    async saveAsContact({ firstName, lastName, customer }) {
+      const id = this.activeConversationId
+      this.infoByConversation[id] = await call(`${API}.save_number_as_contact`, {
+        conversation_id: id, first_name: firstName, last_name: lastName, customer: customer || undefined,
+      })
+      this.loadConversations()
+      return this.infoByConversation[id]
+    },
+    async createLead({ firstName, lastName, companyName }) {
+      const id = this.activeConversationId
+      this.infoByConversation[id] = await call(`${API}.create_lead_from_chat`, {
+        conversation_id: id, first_name: firstName, last_name: lastName, company_name: companyName,
+      })
+      this.loadConversations()
+      return this.infoByConversation[id]
+    },
     async assign(user) {
       const id = this.activeConversationId
       this.infoByConversation[id] = await call(`${API}.assign_conversation`, { conversation_id: id, user: user || null })
@@ -146,7 +216,7 @@ export const useChatStore = defineStore('chat', {
       const list = this.messagesByConversation[id] || []
       if (!list.some((m) => m.name === msg.name)) this.messagesByConversation[id] = [...list, msg]
     },
-    async sendText(to, message, { referenceDoctype, referenceName, scheduledTime } = {}) {
+    async sendText(to, message, { referenceDoctype, referenceName, scheduledTime, replyTo } = {}) {
       const msg = await call(`${API}.send_message`, {
         to,
         message,
@@ -154,11 +224,12 @@ export const useChatStore = defineStore('chat', {
         reference_doctype: referenceDoctype,
         reference_name: referenceName,
         scheduled_time: scheduledTime || undefined,
+        reply_to: replyTo || undefined,
       })
       this._appendSent(msg)
       return msg
     },
-    async sendMedia(to, mediaUrl, mediaType, caption, { referenceDoctype, referenceName } = {}) {
+    async sendMedia(to, mediaUrl, mediaType, caption, { referenceDoctype, referenceName, replyTo } = {}) {
       const msg = await call(`${API}.send_media_message`, {
         to,
         media_url: mediaUrl,
@@ -167,11 +238,30 @@ export const useChatStore = defineStore('chat', {
         provider: this.provider || undefined,
         reference_doctype: referenceDoctype,
         reference_name: referenceName,
+        reply_to: replyTo || undefined,
       })
       this._appendSent(msg)
       return msg
     },
-    async sendTemplate(to, template, parameters, { referenceDoctype, referenceName, headerMediaUrl, scheduledTime } = {}) {
+    async sendLocation(to, { latitude, longitude, name, address, replyTo } = {}) {
+      const msg = await call(`${API}.send_location`, {
+        to, latitude, longitude, name, address,
+        provider: this.provider || undefined,
+        reply_to: replyTo || undefined,
+      })
+      this._appendSent(msg)
+      return msg
+    },
+    async sendContactCard(to, { contact, name, phone, replyTo } = {}) {
+      const msg = await call(`${API}.send_contact_card`, {
+        to, contact, name, phone,
+        provider: this.provider || undefined,
+        reply_to: replyTo || undefined,
+      })
+      this._appendSent(msg)
+      return msg
+    },
+    async sendTemplate(to, template, parameters, { referenceDoctype, referenceName, headerMediaUrl, scheduledTime, replyTo } = {}) {
       const msg = await call(`${API}.send_template_message`, {
         to,
         template,
@@ -181,6 +271,7 @@ export const useChatStore = defineStore('chat', {
         reference_name: referenceName,
         header_media_url: headerMediaUrl,
         scheduled_time: scheduledTime || undefined,
+        reply_to: replyTo || undefined,
       })
       this._appendSent(msg)
       return msg
@@ -206,7 +297,11 @@ export const useChatStore = defineStore('chat', {
         const msg = list?.find((m) => m.name === evt.name)
         if (msg) msg.status = evt.status
       })
-      this._unsubscribeRealtime = () => { offNew(); offUpdate() }
+      // Notes added or removed by teammates.
+      const offNote = onNote((evt) => {
+        if (evt.conversation_id === this.activeConversationId) this.loadNotes(evt.conversation_id)
+      })
+      this._unsubscribeRealtime = () => { offNew(); offUpdate(); offNote() }
     },
   },
 })

@@ -91,14 +91,27 @@ class BaseProvider:
 	def __init__(self, settings):
 		self.settings = settings
 
-	def send_text(self, to: str, body: str) -> dict:
+	# context_id: the provider message id being replied to (quoted). Meta
+	# shows the quote on the customer's phone; Twilio has no equivalent, so
+	# there the reply link is only kept on our own record.
+	def send_text(self, to: str, body: str, context_id: str | None = None) -> dict:
 		raise NotImplementedError
 
 	def send_template(self, to: str, template, params: dict, lang: str = "en",
-	                   header_media_url: str | None = None, header_type: str | None = None) -> dict:
+	                   header_media_url: str | None = None, header_type: str | None = None,
+	                   context_id: str | None = None) -> dict:
 		raise NotImplementedError
 
-	def send_media(self, to: str, media_url: str, media_type: str, caption: str = "") -> dict:
+	def send_media(self, to: str, media_url: str, media_type: str, caption: str = "",
+	               context_id: str | None = None) -> dict:
+		raise NotImplementedError
+
+	def send_location(self, to: str, latitude, longitude, name: str = "", address: str = "",
+	                  context_id: str | None = None) -> dict:
+		raise NotImplementedError
+
+	def send_contacts(self, to: str, contacts: list, context_id: str | None = None) -> dict:
+		"""contacts: [{"name": "...", "phones": ["..."], "emails": ["..."], "company": "..."}]"""
 		raise NotImplementedError
 
 
@@ -120,23 +133,49 @@ class MetaProvider(BaseProvider):
 			"Content-Type": "application/json",
 		}
 
-	def _post(self, payload: dict) -> dict:
+	def _post(self, payload: dict, context_id: str | None = None) -> dict:
+		if context_id:
+			payload["context"] = {"message_id": context_id}
 		resp = requests.post(self.base_url, headers=self._headers(), data=json.dumps(payload), timeout=30)
 		data = _json_or_error(resp)
 		if resp.status_code >= 400:
 			raise WhatsAppSendError(data.get("error", {}).get("message", str(data)))
 		return data
 
-	def send_text(self, to, body):
+	def send_text(self, to, body, context_id=None):
 		payload = {
 			"messaging_product": "whatsapp",
 			"to": to,
 			"type": "text",
 			"text": {"body": body},
 		}
-		return self._post(payload)
+		return self._post(payload, context_id)
 
-	def send_template(self, to, template, params, lang="en", header_media_url=None, header_type=None):
+	def send_location(self, to, latitude, longitude, name="", address="", context_id=None):
+		location = {"latitude": float(latitude), "longitude": float(longitude)}
+		if name:
+			location["name"] = name
+		if address:
+			location["address"] = address
+		return self._post({"messaging_product": "whatsapp", "to": to, "type": "location", "location": location}, context_id)
+
+	def send_contacts(self, to, contacts, context_id=None):
+		payload_contacts = []
+		for c in contacts:
+			name = (c.get("name") or "").strip() or "Contact"
+			first, _, last = name.partition(" ")
+			entry = {
+				"name": {"formatted_name": name, "first_name": first, **({"last_name": last} if last else {})},
+				"phones": [{"phone": p, "type": "CELL"} for p in c.get("phones") or [] if p],
+			}
+			if c.get("emails"):
+				entry["emails"] = [{"email": e, "type": "WORK"} for e in c["emails"] if e]
+			if c.get("company"):
+				entry["org"] = {"company": c["company"]}
+			payload_contacts.append(entry)
+		return self._post({"messaging_product": "whatsapp", "to": to, "type": "contacts", "contacts": payload_contacts}, context_id)
+
+	def send_template(self, to, template, params, lang="en", header_media_url=None, header_type=None, context_id=None):
 		body_params, header_param, button_params = split_template_params(params)
 		components = []
 		if header_type and header_type not in ("None", "Text") and header_media_url:
@@ -172,16 +211,20 @@ class MetaProvider(BaseProvider):
 				"components": components,
 			},
 		}
-		return self._post(payload)
+		return self._post(payload, context_id)
 
-	def send_media(self, to, media_url, media_type, caption=""):
+	def send_media(self, to, media_url, media_type, caption="", context_id=None):
+		media = {"link": media_url}
+		# Meta rejects captions on audio messages.
+		if caption and media_type != "audio":
+			media["caption"] = caption
 		payload = {
 			"messaging_product": "whatsapp",
 			"to": to,
 			"type": media_type,
-			media_type: {"link": media_url, **({"caption": caption} if caption else {})},
+			media_type: media,
 		}
-		return self._post(payload)
+		return self._post(payload, context_id)
 
 	def mark_read(self, message_id: str) -> dict:
 		"""Read receipt: the customer sees blue ticks on this message and
@@ -300,7 +343,14 @@ class TwilioProvider(BaseProvider):
 
 	@staticmethod
 	def _wa(number: str) -> str:
-		return number if number.startswith("whatsapp:") else f"whatsapp:{number}"
+		"""Twilio needs E.164 with the leading "+" (whatsapp:+919876543210).
+		Numbers are stored digits-only (919876543210), and sending those
+		as-is made Twilio reject every message as an invalid number."""
+		number = (number or "").strip()
+		if number.startswith("whatsapp:"):
+			number = number[len("whatsapp:"):]
+		digits = "".join(ch for ch in number if ch.isdigit())
+		return f"whatsapp:+{digits}" if digits else f"whatsapp:{number}"
 
 	def _post(self, data: dict) -> dict:
 		resp = requests.post(self.base_url, data=data, auth=(self.account_sid, self.auth_token), timeout=30)
@@ -309,14 +359,31 @@ class TwilioProvider(BaseProvider):
 			raise WhatsAppSendError(payload.get("message", str(payload)))
 		return payload
 
-	def send_text(self, to, body):
+	def send_text(self, to, body, context_id=None):
 		return self._post({
 			"From": self._wa(self.from_number),
 			"To": self._wa(to),
 			"Body": body,
 		})
 
-	def send_template(self, to, template, params, lang="en", header_media_url=None, header_type=None):
+	def send_location(self, to, latitude, longitude, name="", address="", context_id=None):
+		label = " — ".join(x for x in (name, address) if x)
+		return self._post({
+			"From": self._wa(self.from_number),
+			"To": self._wa(to),
+			"Body": label or "Location",
+			"PersistentAction": f"geo:{latitude},{longitude}" + (f"|{label}" if label else ""),
+		})
+
+	def send_contacts(self, to, contacts, context_id=None):
+		# Twilio's WhatsApp API has no contact-card type; send the details as text.
+		lines = []
+		for c in contacts:
+			parts = [c.get("name") or "Contact", *(c.get("phones") or []), *(c.get("emails") or [])]
+			lines.append(" · ".join(p for p in parts if p))
+		return self.send_text(to, "👤 " + "\n👤 ".join(lines))
+
+	def send_template(self, to, template, params, lang="en", header_media_url=None, header_type=None, context_id=None):
 		# header_media_url/header_type are accepted for interface parity with
 		# MetaProvider but unused here — Twilio Content API templates carry
 		# their media as part of the Content SID definition itself.
@@ -335,7 +402,7 @@ class TwilioProvider(BaseProvider):
 			data["ContentVariables"] = json.dumps({str(k): str(v) for k, v in body_params.items()})
 		return self._post(data)
 
-	def send_media(self, to, media_url, media_type, caption=""):
+	def send_media(self, to, media_url, media_type, caption="", context_id=None):
 		return self._post({
 			"From": self._wa(self.from_number),
 			"To": self._wa(to),

@@ -21,8 +21,13 @@ export function pushPermission() {
 
 export async function getExistingSubscription() {
   if (!pushSupported()) return null
-  const reg = await navigator.serviceWorker.ready
-  return reg.pushManager.getSubscription()
+  // serviceWorker.ready never resolves when no worker is registered (dev,
+  // or registration failed), which would hang logout; give up after 3s.
+  const reg = await Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise((resolve) => setTimeout(() => resolve(null), 3000)),
+  ])
+  return reg ? reg.pushManager.getSubscription() : null
 }
 
 // Requests notification permission, creates (or reuses) a push
@@ -63,8 +68,13 @@ export async function enablePush() {
 export async function disablePush() {
   const subscription = await getExistingSubscription()
   if (!subscription) return
-  await call('whatsnext.whatsnext.api.push.remove_push_subscription', {
-    endpoint: subscription.endpoint,
-  })
-  await subscription.unsubscribe()
+  try {
+    await call('whatsnext.whatsnext.api.push.remove_push_subscription', {
+      endpoint: subscription.endpoint,
+    })
+  } finally {
+    // Unsubscribe locally even if the server call fails (e.g. session
+    // already expired) so the browser stops receiving pushes either way.
+    await subscription.unsubscribe()
+  }
 }

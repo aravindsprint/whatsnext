@@ -10,6 +10,7 @@
   "notify_on_failure",
   "default_country_code",
   "failure_notification_email",
+  "campaign_send_interval",
   "section_meta",
   "meta_enabled",
   "meta_phone_number_id",
@@ -78,6 +79,14 @@
    "label": "Failure Notification Email",
    "options": "Email",
    "depends_on": "notify_on_failure"
+  },
+  {
+   "fieldname": "campaign_send_interval",
+   "fieldtype": "Float",
+   "label": "Campaign Send Interval (seconds)",
+   "default": "1",
+   "precision": "2",
+   "description": "Pause between campaign messages. 1 second is safe for new numbers; lower it only for a verified, high-tier sending number (minimum 0.1)."
   },
   {
    "fieldname": "section_meta",

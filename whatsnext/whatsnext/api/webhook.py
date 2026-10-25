@@ -109,6 +109,8 @@ def _save_incoming_meta_message(msg, value):
 		"content_type": content_type,
 		"provider_message_id": msg.get("id"),
 		"conversation_id": from_number,
+		# The customer swiped to reply to one of our messages (or theirs).
+		"reply_to": _local_message_for((msg.get("context") or {}).get("id")),
 		"customer": resolve_customer_from_phone(from_number),
 	})
 	doc.insert(ignore_permissions=True)
@@ -273,6 +275,11 @@ def _apply_status_update(provider_message_id, new_status, error=None):
 		updates["error_message"] = str(error)[:140]
 	frappe.db.set_value("Whatsnext Message", row.name, updates)
 
+	if new_status == "Failed" and row.type == "Outgoing":
+		from whatsnext.whatsnext.conversations import record_outgoing_failed
+
+		record_outgoing_failed(row.conversation_id)
+
 	if row.reference_doctype == "Whatsnext Campaign" and row.reference_name:
 		_update_campaign_recipient(row.reference_name, row.name, new_status, error)
 
@@ -397,6 +404,7 @@ def twilio_webhook():
 		"content_type": content_type,
 		"provider_message_id": message_sid,
 		"conversation_id": from_number,
+		"reply_to": _local_message_for(form.get("OriginalRepliedMessageSid")),
 		"customer": resolve_customer_from_phone(from_number),
 	})
 	doc.insert(ignore_permissions=True)
@@ -436,6 +444,12 @@ def _download_and_attach_twilio_media(doc, media_url, mime_type, content_type):
 		# Keep the link so the media isn't lost entirely.
 		doc.db_set("attach", media_url, update_modified=False)
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- webhook request
+
+
+def _local_message_for(provider_message_id):
+	if not provider_message_id:
+		return None
+	return frappe.db.get_value("Whatsnext Message", {"provider_message_id": provider_message_id}, "name")
 
 
 def _twiml_ok():

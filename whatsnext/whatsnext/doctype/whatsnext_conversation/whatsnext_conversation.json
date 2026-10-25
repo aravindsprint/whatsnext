@@ -19,7 +19,14 @@
   "contact",
   "last_message_at",
   "last_incoming_at",
-  "last_away_reply_at"
+  "last_away_reply_at",
+  "section_summary",
+  "last_message",
+  "last_message_type",
+  "last_message_name",
+  "column_summary",
+  "unread_count",
+  "outgoing_count"
  ],
  "fields": [
   {
@@ -44,7 +51,8 @@
    "options": "Open\nClosed",
    "default": "Open",
    "in_list_view": 1,
-   "in_standard_filter": 1
+   "in_standard_filter": 1,
+   "search_index": 1
   },
   {
    "fieldname": "assigned_to",
@@ -52,7 +60,8 @@
    "options": "User",
    "label": "Assigned To",
    "in_list_view": 1,
-   "in_standard_filter": 1
+   "in_standard_filter": 1,
+   "search_index": 1
   },
   {
    "fieldname": "column_1",
@@ -64,7 +73,8 @@
    "options": "Customer",
    "label": "Customer",
    "read_only": 1,
-   "in_standard_filter": 1
+   "in_standard_filter": 1,
+   "search_index": 1
   },
   {
    "fieldname": "contact",
@@ -77,7 +87,8 @@
    "fieldname": "last_message_at",
    "fieldtype": "Datetime",
    "label": "Last Message At",
-   "read_only": 1
+   "read_only": 1,
+   "search_index": 1
   },
   {
    "fieldname": "last_incoming_at",
@@ -91,6 +102,49 @@
    "fieldtype": "Datetime",
    "label": "Last Away Reply At",
    "read_only": 1
+  },
+  {
+   "fieldname": "section_summary",
+   "fieldtype": "Section Break",
+   "label": "Summary (maintained automatically)",
+   "collapsible": 1
+  },
+  {
+   "fieldname": "last_message",
+   "fieldtype": "Small Text",
+   "label": "Last Message",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_message_type",
+   "fieldtype": "Select",
+   "options": "\nIncoming\nOutgoing",
+   "label": "Last Message Direction",
+   "read_only": 1
+  },
+  {
+   "fieldname": "last_message_name",
+   "fieldtype": "Data",
+   "label": "Last Message ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_summary",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "unread_count",
+   "fieldtype": "Int",
+   "label": "Unread Messages",
+   "read_only": 1,
+   "default": "0"
+  },
+  {
+   "fieldname": "outgoing_count",
+   "fieldtype": "Int",
+   "label": "Messages Sent",
+   "read_only": 1,
+   "default": "0"
   }
  ],
  "permissions": [

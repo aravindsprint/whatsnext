@@ -1,0 +1,20 @@
+{
+ "doctype": "DocType",
+ "name": "Whatsnext Conversation Note",
+ "module": "Whatsnext",
+ "custom": 0,
+ "engine": "InnoDB",
+ "autoname": "hash",
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "description": "Internal team notes on a WhatsApp chat. Never sent to the customer.",
+ "field_order": ["conversation_id", "note"],
+ "fields": [
+  {"fieldname": "conversation_id", "fieldtype": "Data", "label": "WhatsApp Number", "reqd": 1, "in_list_view": 1, "search_index": 1},
+  {"fieldname": "note", "fieldtype": "Small Text", "label": "Note", "reqd": 1, "in_list_view": 1}
+ ],
+ "permissions": [
+  {"role": "System Manager", "read": 1, "write": 1, "create": 1, "delete": 1},
+  {"role": "Whatsnext User", "read": 1, "create": 1}
+ ]
+}
