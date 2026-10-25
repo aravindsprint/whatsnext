@@ -4,7 +4,11 @@ app_publisher = "Aravind Govindaraj"
 app_description = "Standalone WhatsApp Business messaging hub (Meta Cloud API + Twilio) for ERPNext — templates, scheduling, dashboards, and event-driven notifications."
 app_email = "aravindsprint@gmail.com"
 app_license = "MIT"
-app_version = "1.0.0"
+app_version = "1.1.0"
+
+# Messages link to Customer and Contact, and chats are scoped by Sales Person,
+# so the app needs ERPNext; without it the install fails on those links.
+required_apps = ["erpnext"]
 
 # Includes
 # ------------------
