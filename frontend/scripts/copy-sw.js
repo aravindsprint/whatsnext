@@ -33,11 +33,14 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const destDir = resolve(__dirname, '../../whatsnext/www/whatsnext')
 mkdirSync(destDir, { recursive: true })
 
-const files = ['sw.js', 'manifest.webmanifest']
+// sw.js is written as sw.min.js: Frappe serves www/ files ending in min.js
+// unchanged, while any other .js goes through Jinja (see hooks.py, which
+// routes /whatsnext/sw.js to it).
+const files = [['sw.js', 'sw.min.js'], ['manifest.webmanifest', 'manifest.webmanifest']]
 
-for (const file of files) {
+for (const [file, target] of files) {
   const src = resolve(__dirname, `../../whatsnext/public/whatsnext_frontend/${file}`)
-  const dest = resolve(destDir, file)
+  const dest = resolve(destDir, target)
 
   if (!existsSync(src)) {
     console.error(`[copy-sw] Built file not found at ${src} — did vite build run first?`)
