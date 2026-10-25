@@ -1,4 +1,4 @@
-import { precacheAndRoute } from 'workbox-precaching'
+import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching'
 
 // Injected at build time by vite-plugin-pwa (injectManifest strategy) with
 // the hashed list of built assets to precache for offline use. URLs are
@@ -6,6 +6,11 @@ import { precacheAndRoute } from 'workbox-precaching'
 // vite.config.js) since this script itself is served from /whatsnext/sw.js
 // — a different directory than the assets it's precaching.
 precacheAndRoute(self.__WB_MANIFEST)
+
+// Delete precaches left behind by earlier builds. Without this, every deploy
+// adds another full copy of the app to the browser's Cache Storage and an
+// old copy can keep answering requests after a new version is live.
+cleanupOutdatedCaches()
 
 // No offline navigation/app-shell fallback here on purpose: the page at
 // /whatsnext is rendered server-side by a Jinja template (www/whatsnext.py)
