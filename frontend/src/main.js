@@ -7,6 +7,7 @@ import './style.css'
 import { getSessionUser, isLoggedIn } from './api/frappe'
 import { ensureCacheOwner } from './db'
 import tableLabels from './lib/tableLabels'
+import { registerServiceWorker, recoverFromMissingChunks } from './lib/appUpdate'
 
 // Before anything reads the offline cache: drop it if it belongs to a
 // different user than the one now logged in.
@@ -18,17 +19,8 @@ ready.finally(() => {
 // Manual service worker registration — vite-plugin-pwa's normal
 // auto-injected registration script never runs here, because
 // www/whatsnext.html is a hand-written Jinja template rather than the
-// index.html Vite itself builds, so that injected snippet never ships to
-// the browser. In production this deliberately targets /whatsnext/sw.js
-// (a build-time copy of the same file — see scripts/copy-sw.js) rather
-// than its real build path under /assets/whatsnext/whatsnext_frontend/:
-// a service worker's default scope is the directory it's served from, and
-// only /whatsnext/sw.js sits in the same directory as the pages
-// (/whatsnext, /whatsnext/settings, ...) that need it to control them.
-if ('serviceWorker' in navigator) {
-  const swUrl = import.meta.env.PROD ? '/whatsnext/sw.js' : '/sw.js'
-  const scope = import.meta.env.PROD ? '/whatsnext/' : '/'
-  navigator.serviceWorker.register(swUrl, { scope }).catch((err) => {
-    console.error('Service worker registration failed:', err)
-  })
-}
+// index.html Vite itself builds. It targets /whatsnext/sw.js (a build-time
+// copy, see scripts/copy-sw.js) so its scope covers the app's pages.
+// lib/appUpdate.js also keeps open tabs on the latest deployed build.
+registerServiceWorker()
+recoverFromMissingChunks(router)

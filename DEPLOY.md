@@ -4,13 +4,10 @@
 cd frontend
 rm -rf node_modules/.vite      # Vite's build cache can go stale and silently skip real changes
 yarn install
-yarn build
+yarn build                     # writes straight into whatsnext/public/whatsnext_frontend/
+                               # (vite.config.js outDir) and copies sw.js to www/whatsnext/
 
-cd ..
-mkdir -p whatsnext/public/whatsnext_frontend
-cp -r frontend/dist/* whatsnext/public/whatsnext_frontend/
-
-cd ..                                # back to bench root
+cd ../..                             # back to bench root
 bench build --app whatsnext          # rebuilds Desk assets + relinks public/ — does NOT touch the SPA source
 bench --site <site> migrate          # required after any doctype/field/fixture change
 bench --site <site> clear-cache
@@ -57,7 +54,22 @@ Notes:
 - Only *incoming* WhatsApp messages trigger a push — outgoing ones don't,
   since the sender already knows they sent it.
 
-After deploying any frontend change, **test in an Incognito/Private tab first**.
+## Updates reach open tabs on their own
+
+Nobody needs to hard-refresh after a deploy. `frontend/src/lib/appUpdate.js`
+registers the service worker with `updateViaCache: 'none'` and checks for a
+new build on load, whenever the tab regains focus, and every 30 minutes. When
+a new build takes over, a tab in the background reloads itself; a tab in use
+shows a small "Whatsnext has been updated — Reload" bar (and reloads the next
+time it is hidden), so a half-typed message is never lost. The service worker
+also deletes the previous build's precache, and a tab that asks for a page
+file a deploy has removed reloads once instead of showing a blank page.
+
+The one thing this cannot cover is a server that has not pulled the new code:
+the browser can only be as current as what `/whatsnext` serves. After a
+deploy, check the bundle name with
+`grep -m1 '"file": "assets/index' apps/whatsnext/whatsnext/public/whatsnext_frontend/.vite/manifest.json`
+against the same file on GitHub.
 This app is a PWA with a service worker; a browser that already has it
 installed will keep serving the old cached bundle even after a fully
 successful rebuild. If Incognito shows the fix but a regular tab doesn't,
