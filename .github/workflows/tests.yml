@@ -38,3 +38,23 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npx vite build --outDir /tmp/wn-build-check --emptyOutDir
+
+  marketplace-audit:
+    # Same Semgrep rules Frappe Cloud's Marketplace audit runs; a finding
+    # here blocks the Marketplace release, so catch it on the PR instead.
+    name: Marketplace security audit (Semgrep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: frappe/press
+          path: .press
+          sparse-checkout: press/marketplace/doctype/marketplace_app_audit/checks/semgrep-rules
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install semgrep
+      - run: >
+          semgrep --config .press/press/marketplace/doctype/marketplace_app_audit/checks/semgrep-rules
+          --error --metrics=off --exclude .press .
