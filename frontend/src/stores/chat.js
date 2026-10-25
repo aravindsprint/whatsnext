@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { call } from '@/api/frappe'
 import { cacheConversations, getCachedConversations, cacheMessages, getCachedMessages } from '@/db'
-import { onNewMessage, onMessageUpdate, onNote } from '@/realtime'
+import { onNewMessage, onMessageUpdate, onNote, onConversationUpdate } from '@/realtime'
 
 const API = 'whatsnext.whatsnext.api'
 const PAGE_SIZE = 50
@@ -301,7 +301,12 @@ export const useChatStore = defineStore('chat', {
       const offNote = onNote((evt) => {
         if (evt.conversation_id === this.activeConversationId) this.loadNotes(evt.conversation_id)
       })
-      this._unsubscribeRealtime = () => { offNew(); offUpdate(); offNote() }
+      // A chat's details changed elsewhere (e.g. an add-on labelled it).
+      const offConversation = onConversationUpdate((evt) => {
+        if (evt.conversation_id === this.activeConversationId) this.loadInfo()
+        this.loadConversations()
+      })
+      this._unsubscribeRealtime = () => { offNew(); offUpdate(); offNote(); offConversation() }
     },
   },
 })

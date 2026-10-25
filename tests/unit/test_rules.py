@@ -129,3 +129,33 @@ def test_extensions_come_from_hooks_and_respect_enabled(frappe):
 	frappe.get_attr = MagicMock(side_effect=lambda path: {"addon.on": lambda: True, "addon.off": lambda: False, "addon.boom": boom}[path])
 	assert api.get_extensions() == {"smart_replies": {"options": "addon.options", "suggest": "addon.suggest"}}
 	frappe.log_error.assert_called_once()
+
+
+def test_conversation_labels_come_from_hooks_and_are_cleaned(frappe):
+	from unittest.mock import MagicMock
+
+	from whatsnext.whatsnext import api
+
+	frappe.get_hooks = MagicMock(return_value=["addon.labels", "addon.broken"])
+
+	def labels(ids):
+		assert ids == ["91111", "92222"]
+		return {"91111": [
+			{"text": "Urgent", "tone": "red", "title": "Angry about delay"},
+			{"text": "  ", "tone": "red"},
+			{"text": "x" * 80, "tone": "<script>"},
+		]}
+
+	def broken(ids):
+		raise RuntimeError("bad hook")
+
+	frappe.get_attr = MagicMock(side_effect=lambda path: {"addon.labels": labels, "addon.broken": broken}[path])
+	rows = [frappe._dict(conversation_id="91111"), frappe._dict(conversation_id="92222")]
+	api.add_extension_labels(rows)
+	assert rows[0]["labels"] == [
+		{"text": "Urgent", "tone": "red", "title": "Angry about delay"},
+		{"text": "x" * 40, "tone": "gray", "title": ""},
+	]
+	assert rows[1]["labels"] == []
+	frappe.log_error.assert_called_once()
+	assert api.conversation_labels([]) == {}

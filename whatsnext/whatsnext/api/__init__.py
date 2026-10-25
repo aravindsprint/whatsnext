@@ -85,6 +85,43 @@ def get_extensions():
 	return extensions
 
 
+LABEL_TONES = {"teal", "gray", "orange", "red", "green"}
+
+
+def conversation_labels(conversation_ids):
+	"""Chips other installed apps add to chats through the
+	`whatsnext_conversation_labels` hook: {conversation id: [{"text", "tone",
+	"title"}]}. Callers pass only chats the user may already see. A broken
+	hook is logged and skipped; the chat list still loads."""
+	labels = {}
+	ids = [c for c in conversation_ids or [] if c]
+	if not ids:
+		return labels
+	for path in frappe.get_hooks("whatsnext_conversation_labels") or []:
+		try:
+			result = frappe.get_attr(path)(ids) or {}
+		except Exception:
+			frappe.log_error(frappe.get_traceback(), f"Whatsnext labels hook {path} failed")
+			continue
+		for conversation_id, chips in result.items():
+			for chip in chips or []:
+				text = str((chip or {}).get("text") or "").strip()[:40]
+				if not text:
+					continue
+				labels.setdefault(conversation_id, []).append({
+					"text": text,
+					"tone": chip.get("tone") if chip.get("tone") in LABEL_TONES else "gray",
+					"title": str(chip.get("title") or "")[:200],
+				})
+	return labels
+
+
+def add_extension_labels(rows):
+	labels = conversation_labels([r.conversation_id for r in rows])
+	for r in rows:
+		r["labels"] = labels.get(r.conversation_id, [])
+
+
 def _map_meta_category(cat: str) -> str:
 	cat = (cat or "").upper()
 	if cat == "MARKETING":
@@ -412,6 +449,7 @@ def get_conversations(limit: int = 50, offset: int = 0, search: str = None, filt
 		r["modified"] = r.last_message_at
 		r["is_unread"] = bool(r.unread_count)
 		r["window_open"] = bool(r.last_incoming_at and r.last_incoming_at > window_cutoff)
+	add_extension_labels(rows)
 
 	return {
 		"data": rows,
@@ -601,6 +639,7 @@ def get_conversation_info(conversation_id: str):
 			fields=["name", "message", "template", "scheduled_time"],
 			order_by="scheduled_time asc",
 		),
+		"labels": conversation_labels([conversation_id]).get(conversation_id, []),
 	}
 
 

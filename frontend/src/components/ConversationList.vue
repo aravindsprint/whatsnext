@@ -1,5 +1,6 @@
 <script setup>
 import { parseFrappeDate } from '@/lib/date'
+import ChatLabels from '@/components/ChatLabels.vue'
 
 defineProps({ conversations: Array, activeId: String, hasMore: Boolean, loadingMore: Boolean })
 const emit = defineEmits(['select', 'load-more'])
@@ -38,6 +39,7 @@ function formatTime(value) {
           <span v-if="c.assigned_to" class="wn-assignee" :title="'Assigned to ' + c.assigned_to">{{ initials(c.assigned_to) }}</span>
           <span v-if="c.is_unread" class="wn-unread-dot"></span>
         </div>
+        <ChatLabels v-if="c.labels?.length" :labels="c.labels" class="wn-conv-labels" />
       </div>
     </div>
     <div v-if="hasMore" class="wn-load-more">
@@ -56,6 +58,7 @@ function formatTime(value) {
   display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0;
 }
 .wn-conv-body { min-width: 0; flex: 1; }
+.wn-conv-labels { margin-top: 4px; }
 .wn-conv-top { display: flex; justify-content: space-between; gap: 8px; }
 .wn-conv-name { font-weight: 600; font-size: 14px; }
 .wn-conv-time { font-size: 11px; color: var(--wn-text-muted); flex-shrink: 0; }

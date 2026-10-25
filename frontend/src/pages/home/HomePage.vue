@@ -10,6 +10,8 @@ import ConversationList from '@/components/ConversationList.vue'
 import MessageBubble from '@/components/MessageBubble.vue'
 import TemplateSendForm from '@/components/TemplateSendForm.vue'
 import AiReplySuggestions from '@/components/AiReplySuggestions.vue'
+import AiChatTools from '@/components/AiChatTools.vue'
+import ChatLabels from '@/components/ChatLabels.vue'
 
 const chat = useChatStore()
 const auth = useAuthStore()
@@ -219,8 +221,34 @@ function useQuickReply(r) {
   qrSearch.value = ''
 }
 
-// --- AI reply suggestions (only when an add-on provides them) ------------
-const aiReplies = computed(() => auth.extensions?.smart_replies || null)
+// --- AI features (only when an add-on provides them) ---------------------
+// Composer: suggested replies, improve and translate the draft.
+const aiComposer = computed(() => {
+  const ext = auth.extensions || {}
+  const picked = {}
+  for (const key of ['smart_replies', 'improve_reply', 'translate']) if (ext[key]) picked[key] = ext[key]
+  return Object.keys(picked).length ? picked : null
+})
+// Chat header menu: summary, draft sales order, labels.
+const aiChatTools = computed(() => {
+  const ext = auth.extensions || {}
+  const picked = {}
+  for (const key of ['chat_summary', 'order_draft', 'auto_tag']) if (ext[key]) picked[key] = ext[key]
+  return Object.keys(picked).length ? picked : null
+})
+const translateExt = computed(() => auth.extensions?.translate || null)
+const activeLabels = computed(() => info.value?.labels || activeConversation.value?.labels || [])
+async function addAiNote(text) {
+  try {
+    await chat.addNote(text)
+  } catch (e) {
+    composerError.value = e.message
+  }
+}
+function onAiLabelled() {
+  chat.loadInfo()
+  chat.loadConversations()
+}
 function useAiSuggestion(text) {
   draft.value = text
   nextTick(() => document.querySelector('.wn-composer input[type="text"]')?.focus())
@@ -696,8 +724,12 @@ async function sendNewChat(payload) {
               <span v-if="info?.status === 'Closed'" class="wn-badge">Closed</span>
               <span v-if="info?.assigned_to" class="wn-badge green">{{ info.assigned_to === auth.user ? 'You' : (info.assigned_to_name || info.assigned_to) }}</span>
               <span v-if="info?.opted_out" class="wn-badge red">Opted out</span>
+              <ChatLabels :labels="activeLabels" class="wn-hide-narrow" />
             </div>
           </div>
+          <AiChatTools v-if="aiChatTools" :exts="aiChatTools" :conversation-id="chat.activeConversationId"
+                       :customer-linked="!!info?.customer" @note="addAiNote" @labelled="onAiLabelled"
+                       @link-customer="showMediaPanel = false; showContactInfo = true" />
           <button v-if="!info?.assigned_to" class="ghost small wn-hide-narrow" :disabled="actionBusy" @click="assignToMe">Assign to me</button>
           <button class="ghost small" :disabled="actionBusy" @click="toggleClosed">
             {{ info?.status === 'Closed' ? 'Reopen' : 'Close' }}
@@ -737,7 +769,7 @@ async function sendNewChat(payload) {
               </div>
             </div>
             <div v-else :id="`wn-msg-${item.message.name}`" class="wn-msg-wrap">
-              <MessageBubble :message="item.message" @reply="startReply" @jump="jumpToMessage" />
+              <MessageBubble :message="item.message" :translate-ext="translateExt" @reply="startReply" @jump="jumpToMessage" />
             </div>
           </template>
           <div v-if="chat.loadingMessages" class="wn-loading">Loading…</div>
@@ -805,7 +837,7 @@ async function sendNewChat(payload) {
                 </p>
               </div>
             </div>
-            <AiReplySuggestions v-if="aiReplies && !noteMode" :ext="aiReplies" :conversation-id="chat.activeConversationId"
+            <AiReplySuggestions v-if="aiComposer && !noteMode" :exts="aiComposer" :conversation-id="chat.activeConversationId" :draft="draft"
                                 @use="useAiSuggestion" @open="showQuickReplies = false; showEmojiPicker = false; showAttachMenu = false" />
             <div class="wn-emoji-wrap">
               <button type="button" class="wn-tpl-btn" :class="{ active: showAttachMenu }" @click="showAttachMenu = !showAttachMenu; showQuickReplies = false" :disabled="attachSending" title="Attach">
