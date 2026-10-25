@@ -113,7 +113,7 @@ def _fire(notif, doc, check_condition=True):
 			field_value = doc.get(row.source_fieldname)
 			if field_value not in (None, ""):
 				value = field_value
-		params[row.template_variable] = value
+		params[row.template_variable] = param_text(value)
 
 	header_media_url = None
 	if notif.attach_document_print:
@@ -130,6 +130,32 @@ def _fire(notif, doc, check_condition=True):
 		header_media_url=header_media_url,
 		automated=1,
 	)
+
+
+def param_text(value):
+	"""A document value as the customer should read it. Date, Datetime and
+	Time fields load from the database as Python objects, which made the
+	whole send fail (json.dumps can't serialize them) for any notification
+	that mapped a field like posting_date or due_date. Format them the way
+	the site displays dates instead of sending raw ISO strings."""
+	import datetime
+	from decimal import Decimal
+
+	if value is None:
+		return None
+	if isinstance(value, datetime.datetime):
+		from frappe.utils import format_datetime
+
+		return format_datetime(value)
+	if isinstance(value, datetime.date):
+		from frappe.utils import formatdate
+
+		return formatdate(value)
+	if isinstance(value, (datetime.time, datetime.timedelta)):
+		return str(value)
+	if isinstance(value, Decimal):
+		return format(value, "f")
+	return value
 
 
 def _fallback_contact_mobile(doc):

@@ -49,12 +49,30 @@ def _meta_signature_ok() -> bool:
 	settings = frappe.get_cached_doc("Whatsnext Settings")
 	secret = settings.get_password("meta_app_secret", raise_exception=False)
 	if not secret:
+		_warn_unsigned_webhook()
 		return True
 	header = frappe.get_request_header("X-Hub-Signature-256") or ""
 	if not header.startswith("sha256="):
 		return False
 	expected = hmac.new(secret.encode(), frappe.request.get_data() or b"", hashlib.sha256).hexdigest()
 	return hmac.compare_digest(expected, header.split("=", 1)[1])
+
+
+def _warn_unsigned_webhook():
+	"""Accepted for compatibility with setups that predate the App Secret,
+	but leave a visible trace (at most once a day) in the Error Log."""
+	try:
+		key = "whatsnext:unsigned_webhook_warned"
+		if _cache().get_value(key):
+			return
+		_cache().set_value(key, 1, expires_in_sec=24 * 3600)
+		frappe.log_error(
+			"A Meta webhook was accepted without a signature check because no Meta App Secret "
+			"is set in Whatsnext Settings. Set it so forged webhooks are rejected.",
+			"Whatsnext: webhook signature not checked",
+		)
+	except Exception:
+		pass
 
 
 def _meta_receive():
@@ -261,7 +279,23 @@ def _apply_status_update(provider_message_id, new_status, error=None):
 		as_dict=True,
 	)
 	if not row:
-		return
+		# The provider can report on a message before the sender has saved
+		# its provider_message_id (a fast "failed" or "sent" lands while the
+		# send request is still open). Keep the update for a few minutes; the
+		# sender replays it via apply_early_statuses() once its id is saved.
+		_remember_early_status(provider_message_id, new_status, error)
+		# The sender may have committed between our lookup and now: start a
+		# fresh transaction (so the re-read isn't served from the old
+		# snapshot) and look again. One side or the other will see it.
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- webhook request
+		row = frappe.db.get_value(
+			"Whatsnext Message", {"provider_message_id": provider_message_id},
+			["name", "status", "conversation_id", "type", "customer", "reference_doctype", "reference_name"],
+			as_dict=True,
+		)
+		if not row:
+			return
+		_forget_early_status(provider_message_id)
 
 	current = row.status or "Pending"
 	if new_status == "Failed":
@@ -291,6 +325,47 @@ def _apply_status_update(provider_message_id, new_status, error=None):
 
 	row.status = new_status
 	publish_message_event(row, event="whatsnext_message_update")
+
+
+EARLY_STATUS_TTL_SECONDS = 600
+
+
+def _cache():
+	# frappe.cache() in v15; an object that is also callable in later versions.
+	return frappe.cache() if callable(frappe.cache) else frappe.cache
+
+
+def _early_status_key(provider_message_id):
+	return f"whatsnext:early_status:{provider_message_id}"
+
+
+def _remember_early_status(provider_message_id, new_status, error=None):
+	key = _early_status_key(provider_message_id)
+	pending = _cache().get_value(key) or []
+	pending.append({"status": new_status, "error": error})
+	_cache().set_value(key, pending, expires_in_sec=EARLY_STATUS_TTL_SECONDS)
+
+
+def _forget_early_status(provider_message_id):
+	_cache().delete_value(_early_status_key(provider_message_id))
+
+
+def apply_early_statuses(provider_message_id):
+	"""Called by the sender right after it has committed a message's
+	provider_message_id: applies any delivery receipts that arrived before
+	the message could be found. Out-of-order and repeated receipts are
+	harmless; _apply_status_update ignores ones that would move it back."""
+	if not provider_message_id:
+		return
+	try:
+		pending = _cache().get_value(_early_status_key(provider_message_id))
+		if not pending:
+			return
+		_forget_early_status(provider_message_id)
+		for update in pending:
+			_apply_status_update(provider_message_id, update.get("status"), update.get("error"))
+	except Exception:
+		frappe.log_error(frappe.get_traceback(), f"Whatsnext: couldn't apply early status for {provider_message_id}")
 
 
 def _update_campaign_recipient(campaign, message_name, new_status, error=None):

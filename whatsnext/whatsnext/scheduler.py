@@ -1,6 +1,11 @@
 import frappe
 from frappe.utils import now_datetime, add_to_date
 
+# Most documents a Scheduled notification handles per 5-minute run (sends are
+# synchronous here, so this keeps a run inside the job time limit); any
+# remainder is picked up by the following runs.
+POLL_BATCH_LIMIT = 200
+
 
 def dispatch_scheduled_messages():
 	"""Runs every 5 minutes. Sends any Pending message whose scheduled_time has arrived."""
@@ -54,6 +59,11 @@ def start_scheduled_campaigns():
 	from whatsnext.whatsnext.campaign_engine import start_campaign
 
 	for name in due:
+		# Re-check under a row lock: the campaign may have been started,
+		# paused or cancelled by hand since the list above was read.
+		if frappe.db.get_value("Whatsnext Campaign", name, "status", for_update=True) != "Scheduled":
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit -- scheduled job; release the row lock
+			continue
 		frappe.db.set_value("Whatsnext Campaign", name, "status", "Queued")
 		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- scheduled job; status must land before the worker picks it up
 		start_campaign(name)
@@ -129,6 +139,9 @@ def dispatch_scheduled_doctype_notifications():
 	if not notifications:
 		return
 
+	# Upper bound fixed once per run: a document saved while this run is
+	# going belongs to the next run. Without it, a save landing between the
+	# query and the bookmark update was notified twice.
 	now = now_datetime()
 	for row in notifications:
 		if not row.reference_doctype:
@@ -136,11 +149,15 @@ def dispatch_scheduled_doctype_notifications():
 
 		since = row.last_polled or add_to_date(now, minutes=-5)
 		try:
+			# Oldest first, and no silent cap: with a 200-row limit and the
+			# bookmark then jumped to `now`, every change past the 200th in a
+			# 5-minute window was skipped for good.
 			changed = frappe.get_all(
 				row.reference_doctype,
-				filters={"modified": [">", since]},
-				fields=["name"],
-				limit_page_length=200,
+				filters=[["modified", ">", since], ["modified", "<=", now]],
+				fields=["name", "modified"],
+				order_by="modified asc, name asc",
+				limit_page_length=POLL_BATCH_LIMIT,
 			)
 		except Exception:
 			# Doctype renamed/removed since this notification was configured,
@@ -164,7 +181,10 @@ def dispatch_scheduled_doctype_notifications():
 						f"Whatsnext Scheduled notification '{row.name}' failed for {row.reference_doctype} {c.name}",
 					)
 
-		frappe.db.set_value("Whatsnext Notification", row.name, "last_polled", now, update_modified=False)
+		# A full batch means there may be more: resume after the last one
+		# handled next run rather than skipping past the rest.
+		bookmark = changed[-1].modified if len(changed) >= POLL_BATCH_LIMIT else now
+		frappe.db.set_value("Whatsnext Notification", row.name, "last_polled", bookmark, update_modified=False)
 
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- scheduled job
 
