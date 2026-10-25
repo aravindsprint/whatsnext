@@ -8,6 +8,16 @@ class WhatsnextSettings(Document):
 			self.meta_phone_number_id and self.get_password("meta_access_token", raise_exception=False)
 		):
 			frappe.throw("Phone Number ID and Access Token are required when Meta Cloud API is enabled.")
+		if self.meta_enabled and not self.get_password("meta_app_secret", raise_exception=False):
+			# Not an error, so existing setups keep working, but without the
+			# secret incoming webhooks can't be verified as coming from Meta.
+			frappe.msgprint(
+				"Set the Meta App Secret: until it is set, Whatsnext can't verify that incoming "
+				"webhooks come from Meta, so anyone who knows the webhook URL could post fake "
+				"customer messages. Find it in your Meta app under App settings → Basic.",
+				title="Webhook signatures not checked",
+				indicator="orange",
+			)
 		if self.twilio_enabled and not (
 			self.twilio_account_sid
 			and self.get_password("twilio_auth_token", raise_exception=False)

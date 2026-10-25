@@ -4,3 +4,4 @@
 whatsnext.patches.v1_1.backfill_conversations
 whatsnext.patches.v1_1.render_template_message_bodies
 whatsnext.patches.v1_1.backfill_conversation_summary
+whatsnext.patches.v1_1.relink_unmatched_conversations

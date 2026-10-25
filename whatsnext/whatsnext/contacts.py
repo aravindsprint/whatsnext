@@ -19,9 +19,19 @@ def normalize_outbound_number(number: str) -> str:
 	if not digits:
 		return number
 
+	# "00" is the international dialling prefix (0044..., 0091...): what
+	# follows already starts with the country code.
+	if digits.startswith("00"):
+		return digits[2:]
+
 	settings = frappe.get_cached_doc("Whatsnext Settings")
 	default_cc = (settings.default_country_code or "91").lstrip("+") or "91"
 
+	# A single leading "0" is the domestic trunk prefix (09876543210,
+	# 07911 123456): drop it and add the country code. Kept as-is, the
+	# number was sent with the 0 and WhatsApp rejected it.
+	if digits.startswith("0"):
+		return f"{default_cc}{digits.lstrip('0')}"
 	if len(digits) <= 10:
 		return f"{default_cc}{digits}"
 	return digits
@@ -37,10 +47,16 @@ def resolve_contact_from_phone(phone: str) -> str | None:
 	if not target:
 		return None
 
+	# Compare digits only: numbers are commonly stored formatted
+	# ("+91 98765 43210", "+91-98765-43210", "(0) 98765 43210"), and a plain
+	# LIKE on the raw value never matched those, leaving the chat with no
+	# Contact or Customer -- and so visible to every Sales Person.
 	row = frappe.db.sql(
 		"""
 		SELECT parent FROM `tabContact Phone`
-		WHERE parenttype = 'Contact' AND phone LIKE %s
+		WHERE parenttype = 'Contact'
+			AND REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(phone,
+				' ', ''), '-', ''), '(', ''), ')', ''), '.', ''), '+', '') LIKE %s
 		ORDER BY is_primary_mobile_no DESC, is_primary_phone DESC
 		LIMIT 1
 		""",

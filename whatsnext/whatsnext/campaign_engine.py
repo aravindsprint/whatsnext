@@ -26,6 +26,14 @@ from whatsnext.whatsnext.provider_engine import get_provider, WhatsAppSendError
 SEND_INTERVAL_SECONDS = 1.0
 MIN_SEND_INTERVAL_SECONDS = 0.1
 
+# The worker kills a job after JOB_TIMEOUT_SECONDS. At 1 send/second a
+# campaign of more than ~3,600 recipients used to be killed mid-run, left
+# "Sending", then force-failed by the stuck-campaign safety net with the rest
+# of its recipients never messaged. Each run now stops well inside the limit
+# and queues a fresh job that carries on with the recipients still Pending.
+JOB_TIMEOUT_SECONDS = 3600
+RUN_BUDGET_SECONDS = 45 * 60
+
 
 def _send_interval():
 	"""Configurable in Whatsnext Settings (Campaign Send Interval)."""
@@ -44,7 +52,7 @@ def start_campaign(campaign_name: str):
 	frappe.enqueue(
 		"whatsnext.whatsnext.campaign_engine.run_campaign",
 		queue="long",
-		timeout=3600,
+		timeout=JOB_TIMEOUT_SECONDS,
 		job_name=f"whatsnext-campaign-{campaign_name}",
 		campaign_name=campaign_name,
 	)
@@ -87,10 +95,19 @@ def run_campaign(campaign_name: str):
 	provider_name = campaign.provider or None
 	respect_opt_out = template.category == "Marketing"
 	interval = _send_interval()
+	started = time.monotonic()
 
 	for i, row in enumerate(campaign.recipients):
 		if row.status != "Pending":
 			continue  # already processed (e.g. a resumed or retried run)
+
+		if time.monotonic() - started > RUN_BUDGET_SECONDS:
+			# Out of time for this job: save progress and continue in a new
+			# one (status stays "Sending", so the next job proceeds).
+			campaign.db_set(_counts_only(campaign_name))
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background job, hand-off must see saved progress
+			start_campaign(campaign_name)
+			return
 
 		# Pause/cancel is checked between sends so it takes effect within a
 		# second instead of after the whole list.
@@ -139,7 +156,7 @@ def run_campaign(campaign_name: str):
 				"message_type": "Template",
 				"content_type": "text",
 				"template": template.name,
-				"template_parameters": json.dumps(params),
+				"template_parameters": json.dumps(params, default=str),
 				"reference_doctype": "Whatsnext Campaign",
 				"reference_name": campaign.name,
 				"is_automated": 1,
@@ -151,6 +168,11 @@ def run_campaign(campaign_name: str):
 				msg.db_set("provider_message_id", provider_message_id, update_modified=False)
 
 			row.db_set({"status": "Sent", "message": msg.name, "error_message": ""}, update_modified=False)
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background job; receipts must be able to match this message
+			if provider_message_id:
+				from whatsnext.whatsnext.api.webhook import apply_early_statuses
+
+				apply_early_statuses(provider_message_id)
 
 		except WhatsAppSendError as e:
 			row.db_set({"status": "Failed", "error_message": str(e)[:140]}, update_modified=False)

@@ -793,7 +793,7 @@ def send_template_message(to: str, template: str, parameters: str | dict | None 
 		type="Outgoing", provider=provider,
 		status="Pending", to_number=to, message=_render_body(tpl.body, parameters), message_type="Template",
 		content_type=content_type, attach=header_media_url,
-		template=template, template_parameters=json.dumps(parameters),
+		template=template, template_parameters=json.dumps(parameters, default=str),
 		reference_doctype=_clean_param(reference_doctype), reference_name=_clean_param(reference_name),
 		scheduled_time=when, reply_to=_clean_reply_to(reply_to, to),
 		is_automated=1 if int(automated or 0) else 0,
@@ -925,6 +925,12 @@ def _dispatch(msg, template_doc=None, params=None, header_media_url=None):
 		msg.db_set("provider", provider.name, update_modified=False)
 		if provider_message_id:
 			msg.db_set("provider_message_id", provider_message_id, update_modified=False)
+			# The message is out; save the id now so delivery webhooks can find
+			# it, then apply any receipt that already arrived before it could.
+			frappe.db.commit()  # nosemgrep: frappe-manual-commit -- provider already sent it; receipts must be able to match it
+			from whatsnext.whatsnext.api.webhook import apply_early_statuses
+
+			apply_early_statuses(provider_message_id)
 	except WhatsAppSendError as e:
 		_mark_failed(msg, str(e))
 	except Exception as e:
@@ -1163,6 +1169,8 @@ def update_template_provider_ids(template: str, twilio_content_sid: str | None =
 	frappe.client.set_value for this) so we can validate the SID shape and
 	keep the permission surface tight to just this one field."""
 	_require_app_user()
+	# Same rule as save_template: only users who may edit the template.
+	frappe.get_doc("Whatsnext Message Template", template).check_permission("write")
 	if twilio_content_sid and not twilio_content_sid.startswith("HX"):
 		frappe.throw("A Twilio Content SID normally starts with 'HX'. Double-check you copied the Content SID, not the Template SID.")
 	frappe.db.set_value("Whatsnext Message Template", template, "twilio_content_sid", twilio_content_sid or "")
@@ -1299,9 +1307,13 @@ def start_campaign(campaign_name: str):
 	from whatsnext.whatsnext.campaign_engine import start_campaign as _start
 
 	frappe.get_doc("Whatsnext Campaign", campaign_name).check_permission("write")
-	status, scheduled_time = frappe.db.get_value("Whatsnext Campaign", campaign_name, ["status", "scheduled_time"])
 	# A double-click or a second tab used to enqueue a second send loop for
-	# the same campaign, messaging every pending recipient twice.
+	# the same campaign, messaging every pending recipient twice. The row
+	# lock (held until the commit below) makes a concurrent call wait and
+	# then see "Queued", instead of both passing the check at once.
+	status, scheduled_time = frappe.db.get_value(
+		"Whatsnext Campaign", campaign_name, ["status", "scheduled_time"], for_update=True
+	)
 	if status in ("Queued", "Sending"):
 		frappe.throw(f"Campaign '{campaign_name}' is already {status.lower()}.")
 	if status == "Cancelled":
@@ -1377,6 +1389,7 @@ def list_campaigns():
 def get_campaign(campaign_name: str):
 	_require_app_user()
 	doc = frappe.get_doc("Whatsnext Campaign", campaign_name)
+	doc.check_permission("read")
 	return {
 		"name": doc.name,
 		"campaign_name": doc.campaign_name,
@@ -1402,8 +1415,9 @@ def export_campaign_results(campaign_name: str, format: str = "xlsx"):
 	format: 'xlsx' or 'pdf'."""
 	_require_app_user()
 	doc = frappe.get_doc("Whatsnext Campaign", campaign_name)
+	doc.check_permission("read")
 
-	headers = ["Phone Number", "Status", "Parameters", "Error", "Message"]
+	headers =["Phone Number", "Status", "Parameters", "Error", "Message"]
 	rows = [headers]
 	for r in doc.recipients:
 		try:
@@ -1975,7 +1989,11 @@ def add_note(conversation_id: str, note: str):
 def delete_note(name: str):
 	"""Authors can delete their own notes; System Managers any note."""
 	_require_app_user()
-	owner, conversation_id = frappe.db.get_value("Whatsnext Conversation Note", name, ["owner", "conversation_id"])
+	row = frappe.db.get_value("Whatsnext Conversation Note", name, ["owner", "conversation_id"])
+	if not row:
+		# Already deleted (e.g. by a teammate) -- unpacking None was a 500.
+		frappe.throw("That note no longer exists.")
+	owner, conversation_id = row
 	if owner != frappe.session.user and "System Manager" not in frappe.get_roles(frappe.session.user):
 		frappe.throw("You can only delete your own notes.", frappe.PermissionError)
 	frappe.delete_doc("Whatsnext Conversation Note", name, ignore_permissions=True)

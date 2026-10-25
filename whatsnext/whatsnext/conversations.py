@@ -299,11 +299,14 @@ def send_away_reply(conversation_id, provider=None):
 		return
 
 	cooldown = int(settings.away_cooldown_hours or 12)
-	last = frappe.db.get_value("Whatsnext Conversation", conversation_id, "last_away_reply_at")
+	# Claim the slot first so two messages arriving together send one reply.
+	# The row lock makes the second job wait for the first one's claim and
+	# then see it, instead of both reading an empty slot at once.
+	last = frappe.db.get_value("Whatsnext Conversation", conversation_id, "last_away_reply_at", for_update=True)
 	if last and get_datetime(last) > add_to_date(now_datetime(), hours=-cooldown):
+		frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background job; release the row lock
 		return
 
-	# Claim the slot first so two messages arriving together send one reply.
 	frappe.db.set_value("Whatsnext Conversation", conversation_id, "last_away_reply_at", now_datetime(), update_modified=False)
 	frappe.db.commit()  # nosemgrep: frappe-manual-commit -- background job; claim before the slow send
 
