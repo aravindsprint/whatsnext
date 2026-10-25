@@ -10,8 +10,26 @@ const statusIcon = { Sent: '✓', Delivered: '✓✓', Read: '✓✓', Failed: '
 // Message text split into plain text and links (rendered as <a>, never as
 // HTML), so shared map pins and URLs are tappable without v-html.
 const URL_RE = /(https?:\/\/[^\s<>"']+)/g
+
+// Template messages are saved with their values filled in, but older ones
+// were stored as the raw template ({{1}}, {{2}}…). Fill those from the saved
+// parameters so the chat shows what the customer actually received.
+function filledText(msg) {
+  const text = msg.message || ''
+  if (!msg.template || !msg.template_parameters || !/\{\{\d+\}\}/.test(text)) return text
+  let params = msg.template_parameters
+  if (typeof params === 'string') {
+    try { params = JSON.parse(params) } catch { return text }
+  }
+  if (!params || typeof params !== 'object') return text
+  return text.replace(/\{\{(\d+)\}\}/g, (match, n) => {
+    const value = params[n]
+    return value === undefined || value === null || value === '' ? match : String(value)
+  })
+}
+
 const segments = computed(() => {
-  const text = props.message.message || ''
+  const text = filledText(props.message)
   const parts = []
   let last = 0
   for (const m of text.matchAll(URL_RE)) {
