@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { call } from '@/api/frappe'
 import { useAuthStore } from '@/stores/auth'
 import QuickRepliesManager from '@/components/QuickRepliesManager.vue'
+import AiBillingCard from '@/components/AiBillingCard.vue'
 import { pushSupported, pushPermission, enablePush, disablePush, getExistingSubscription } from '@/push'
 
 const auth = useAuthStore()
@@ -160,6 +161,9 @@ async function testConnection(provider) {
     </div>
 
     <QuickRepliesManager />
+
+    <!-- Only when an installed add-on offers billing (e.g. Whatsnext AI). -->
+    <AiBillingCard v-if="auth.isSystemManager && auth.extensions?.ai_billing" :ext="auth.extensions.ai_billing" />
 
     <div v-if="!auth.isSystemManager" class="wn-card wn-forbidden">
       The rest of Settings is restricted to System Managers.
