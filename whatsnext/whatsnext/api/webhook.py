@@ -141,8 +141,9 @@ def _save_incoming_meta_message(msg, value):
 
 
 def _handle_keywords(doc):
-	"""Opt-out/opt-in keywords first; any other message may get the
-	outside-business-hours away reply."""
+	"""Opt-out/opt-in keywords first, then handlers from other apps
+	(`whatsnext_incoming_handlers`); any message neither of them takes may
+	get the outside-business-hours away reply."""
 	handled = False
 	try:
 		from whatsnext.whatsnext.conversations import handle_opt_keywords
@@ -151,6 +152,10 @@ def _handle_keywords(doc):
 	except Exception:
 		frappe.log_error(frappe.get_traceback(), "Whatsnext: opt-out keyword handling failed")
 	if handled:
+		return
+	from whatsnext.whatsnext.automation import run_incoming_handlers
+
+	if run_incoming_handlers(doc):
 		return
 	try:
 		from whatsnext.whatsnext.conversations import queue_away_reply
