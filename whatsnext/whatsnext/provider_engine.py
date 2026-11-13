@@ -150,6 +150,11 @@ class BaseProvider:
 	                  context_id: str | None = None) -> dict:
 		raise NotImplementedError
 
+	def send_media_bytes(self, to: str, content: bytes, mime_type: str, media_type: str,
+	                     caption: str = "", context_id: str | None = None) -> dict:
+		"""Send media from bytes without a public URL (Meta only: uploaded to Meta first)."""
+		raise WhatsAppSendError(f"{self.name} can only send media from a public URL.")
+
 	def send_contacts(self, to: str, contacts: list, context_id: str | None = None) -> dict:
 		"""contacts: [{"name": "...", "phones": ["..."], "emails": ["..."], "company": "..."}]"""
 		raise NotImplementedError
@@ -268,6 +273,28 @@ class MetaProvider(BaseProvider):
 			media_type: media,
 		}
 		return self._post(payload, context_id)
+
+	def upload_media(self, content: bytes, mime_type: str, filename: str = "media") -> str:
+		"""Upload bytes to Meta and return a media id (valid ~30 days). Lets us
+		send generated files, e.g. voice replies, without a public link."""
+		resp = requests.post(
+			f"https://graph.facebook.com/{self.version}/{self.phone_number_id}/media",
+			headers={"Authorization": f"Bearer {self.token}"},
+			data={"messaging_product": "whatsapp", "type": mime_type},
+			files={"file": (filename, content, mime_type)},
+			timeout=60,
+		)
+		data = _json_or_error(resp)
+		if resp.status_code >= 400 or not data.get("id"):
+			raise WhatsAppSendError((data.get("error") or {}).get("message", str(data)))
+		return data["id"]
+
+	def send_media_bytes(self, to, content, mime_type, media_type, caption="", context_id=None):
+		ext = {"audio": "ogg", "image": "jpg", "video": "mp4"}.get(media_type, "bin")
+		media = {"id": self.upload_media(content, mime_type, f"{media_type}.{ext}")}
+		if caption and media_type != "audio":
+			media["caption"] = caption
+		return self._post({"messaging_product": "whatsapp", "to": to, "type": media_type, media_type: media}, context_id)
 
 	def mark_read(self, message_id: str) -> dict:
 		"""Read receipt: the customer sees blue ticks on this message and

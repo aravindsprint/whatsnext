@@ -95,6 +95,14 @@ scheduler_events = {
 #   "whatsnext_conversation_update" with {"conversation_id": ...} to make
 #   open chat screens refresh a chat's labels.
 
+# Automatic replies to incoming messages:
+# whatsnext_incoming_handlers = ["my_app.whatsapp.on_incoming"]
+#   called with each saved incoming Whatsnext Message; return True to take
+#   it (Whatsnext then skips the away reply). Keep it cheap and enqueue the
+#   real work; reply from the job with
+#   whatsnext.whatsnext.automation.send_reply(to, text=..., audio=bytes).
+#   erp_agent uses this to answer staff questions from ERPNext.
+
 # Installation
 # ------------------
 after_install = "whatsnext.whatsnext.setup.create_defaults"
